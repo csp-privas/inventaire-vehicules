@@ -10,6 +10,7 @@
 <link rel="icon" href="icon-192.png" />
 <link rel="apple-touch-icon" href="icon-192.png" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Inventaire" />
 <style>
@@ -541,14 +542,17 @@ function renderForm() {
 // ---------------------------------------------------------------------
 let configDraft = null;
 let configDirty = false;
+let configCollapsed = null;
 
 function renderConfig() {
   if (!configDraft) configDraft = JSON.parse(JSON.stringify(state.config));
+  if (!configCollapsed) configCollapsed = new Set(configDraft.vehicles.map((v) => v.id));
 
   const vehicleCards = configDraft.vehicles
     .map((v, index) => {
       const isFirst = index === 0;
       const isLast = index === configDraft.vehicles.length - 1;
+      const collapsed = configCollapsed.has(v.id);
       const groupOptions = (g) =>
         `<option value="">Aucun lieu</option>` +
         v.groups
@@ -579,6 +583,7 @@ function renderConfig() {
         .join("");
       return `<div class="config-card" style="${v.hidden ? "opacity:0.55;" : ""}">
         <div class="config-card-head">
+          <button class="btn-ghost" data-action="toggleCollapse" data-vehicle="${v.id}" title="${collapsed ? "Déplier" : "Replier"}">${collapsed ? "▸" : "▾"}</button>
           <button class="btn-ghost" data-action="moveVehicleUp" data-vehicle="${v.id}" ${isFirst ? "disabled" : ""} title="Monter">↑</button>
           <button class="btn-ghost" data-action="moveVehicleDown" data-vehicle="${v.id}" ${isLast ? "disabled" : ""} title="Descendre">↓</button>
           <input class="input-inline" data-role="vehicleName" data-vehicle="${v.id}" value="${escapeHtml(v.name)}" placeholder="Nom du véhicule" />
@@ -587,6 +592,7 @@ function renderConfig() {
           <button class="danger-btn" data-action="removeVehicle" data-vehicle="${v.id}">🗑</button>
         </div>
 
+        ${collapsed ? `<p class="muted" style="font-size:12px; margin:0;">${v.items.length} équipement(s) · ${v.groups.length} lieu(x)${v.hidden ? " · masqué du tableau de bord" : ""}</p>` : `
         <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#5B6770; margin-bottom:10px;">
           <input type="checkbox" data-role="vehicleHidden" data-vehicle="${v.id}" ${v.hidden ? "checked" : ""} />
           Indisponible — masquer ce véhicule du tableau de bord
@@ -599,6 +605,7 @@ function renderConfig() {
         <p style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#5B6770; margin:16px 0 6px;">Équipements</p>
         ${items}
         <button class="add-item-btn" data-action="addItem" data-vehicle="${v.id}">+ Ajouter un équipement</button>
+        `}
       </div>`;
     })
     .join("");
@@ -606,6 +613,10 @@ function renderConfig() {
   return `
     <h2 class="page-title">Configuration</h2>
     <p class="page-subtitle">Véhicules et équipements suivis par l'application</p>
+    <div style="display:flex; gap:10px; margin-bottom:16px;">
+      <button class="btn-ghost" data-action="expandAll">Tout déplier</button>
+      <button class="btn-ghost" data-action="collapseAll">Tout replier</button>
+    </div>
     ${vehicleCards}
     <button class="add-vehicle-btn" data-action="addVehicle">+ Ajouter un véhicule</button>
     <div class="config-actions">
@@ -656,6 +667,19 @@ function attachHandlers() {
       else if (action === "prevStep") {
         formDraft.step = Math.max(0, formDraft.step - 1);
         formDraft.touched = false;
+        render();
+      }
+      else if (action === "toggleCollapse") {
+        if (configCollapsed.has(vehicleId)) configCollapsed.delete(vehicleId);
+        else configCollapsed.add(vehicleId);
+        render();
+      }
+      else if (action === "expandAll") {
+        configCollapsed.clear();
+        render();
+      }
+      else if (action === "collapseAll") {
+        configDraft.vehicles.forEach((v) => configCollapsed.add(v.id));
         render();
       }
       else if (action === "addVehicle") {
