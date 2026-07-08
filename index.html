@@ -89,7 +89,7 @@
   .setup-box code { background:#F5F3EE; padding:2px 6px; border-radius:3px; font-family:'JetBrains Mono',monospace; font-size:12px; }
 
   @keyframes spin { to { transform: rotate(360deg); } }
-  .spin { animation: spin 1s linear infinite; display:inline-block; }
+  .spinner { animation: spin 0.9s linear infinite; display:block; }
 </style>
 </head>
 <body>
@@ -312,7 +312,7 @@ function render() {
   }
 
   if (state.loading) {
-    app.innerHTML = `<div class="center-box"><span class="spin">⟳</span><p class="muted">Chargement…</p></div>`;
+    app.innerHTML = `<div class="center-box"><svg class="spinner" width="28" height="28" viewBox="0 0 28 28"><circle cx="14" cy="14" r="11" fill="none" stroke="#E4E0D6" stroke-width="3.5"/><circle cx="14" cy="14" r="11" fill="none" stroke="#C8372E" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="52" stroke-dashoffset="35"/></svg><p class="muted">Chargement…</p></div>`;
     return;
   }
 
