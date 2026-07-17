@@ -156,6 +156,23 @@ const STATUS = {
   endommage: { label: "Endommagé", color: "#E8A33D", bg: "#FCF1DF" },
 };
 
+const GRADES = [
+  "Sapeur",
+  "Sapeur 1er classe",
+  "Caporal",
+  "Caporal-chef",
+  "Sergent",
+  "Sergent-chef",
+  "Adjudant",
+  "Adjudant-chef",
+  "Lieutenant",
+  "Capitaine",
+  "Commandant",
+  "Lieutenant-colonel",
+  "Colonel",
+  "Autre",
+];
+
 const uid = () => Math.random().toString(36).slice(2, 9);
 
 // Ensures older configs (free-text "group" field) still work: migrates any
@@ -721,7 +738,11 @@ function renderDirectoryConfig() {
       <div class="config-card-head">
         <input class="input-inline-small" data-role="contactPrenom" data-contact="${c.id}" value="${escapeHtml(c.prenom || "")}" placeholder="Prénom" style="max-width:130px;" />
         <input class="input-inline-small" data-role="contactNom" data-contact="${c.id}" value="${escapeHtml(c.nom || "")}" placeholder="Nom" style="max-width:130px;" />
-        <input class="input-inline-small" data-role="contactGrade" data-contact="${c.id}" value="${escapeHtml(c.grade || "")}" placeholder="Grade / fonction" />
+        <select class="input-inline-small" data-role="contactGrade" data-contact="${c.id}">
+          <option value="">— Grade —</option>
+          ${c.grade && !GRADES.includes(c.grade) ? `<option value="${escapeHtml(c.grade)}" selected>${escapeHtml(c.grade)} (existant)</option>` : ""}
+          ${GRADES.map((g) => `<option value="${g}" ${c.grade === g ? "selected" : ""}>${g}</option>`).join("")}
+        </select>
         <button class="danger-btn" data-action="removeContact" data-contact="${c.id}">🗑</button>
       </div>
       <div class="config-item-row">
