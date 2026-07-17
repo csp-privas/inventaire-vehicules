@@ -173,6 +173,25 @@ const GRADES = [
   "Autre",
 ];
 
+// Ordre d'affichage dans l'annuaire (différent de l'ordre du menu déroulant ci-dessus) :
+// Autre en premier, puis du grade le plus élevé au plus bas.
+const GRADE_DISPLAY_ORDER = [
+  "Autre",
+  "Colonel",
+  "Lieutenant-colonel",
+  "Commandant",
+  "Capitaine",
+  "Lieutenant",
+  "Adjudant-chef",
+  "Adjudant",
+  "Sergent-chef",
+  "Sergent",
+  "Caporal-chef",
+  "Caporal",
+  "Sapeur 1er classe",
+  "Sapeur",
+];
+
 const uid = () => Math.random().toString(36).slice(2, 9);
 
 // Ensures older configs (free-text "group" field) still work: migrates any
@@ -700,8 +719,8 @@ function renderForm() {
 // ---------------------------------------------------------------------
 function renderDirectoryList() {
   const gradeRank = (g) => {
-    const i = GRADES.indexOf(g);
-    return i === -1 ? GRADES.length : i; // pas de grade, ou grade personnalisé -> à la fin
+    const i = GRADE_DISPLAY_ORDER.indexOf(g);
+    return i === -1 ? GRADE_DISPLAY_ORDER.length : i; // pas de grade renseigné -> à la fin
   };
   const contacts = (state.personnel || [])
     .slice()
