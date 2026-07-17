@@ -699,27 +699,43 @@ function renderForm() {
 // Directory (Annuaire)
 // ---------------------------------------------------------------------
 function renderDirectoryList() {
+  const gradeRank = (g) => {
+    const i = GRADES.indexOf(g);
+    return i === -1 ? GRADES.length : i; // pas de grade, ou grade personnalisé -> à la fin
+  };
   const contacts = (state.personnel || [])
     .slice()
-    .sort((a, b) => (a.nom || "").localeCompare(b.nom || "", "fr"));
+    .sort((a, b) => {
+      const r = gradeRank(a.grade) - gradeRank(b.grade);
+      if (r !== 0) return r;
+      const byNom = (a.nom || "").localeCompare(b.nom || "", "fr");
+      if (byNom !== 0) return byNom;
+      return (a.prenom || "").localeCompare(b.prenom || "", "fr");
+    });
 
   if (!contacts.length) {
     return `<div class="empty-box"><p class="muted">Aucun contact enregistré pour le moment.</p></div>`;
   }
 
+  let lastGrade = undefined;
   const rows = contacts
-    .map(
-      (c) => `
+    .map((c) => {
+      const label = c.grade || "Sans grade renseigné";
+      const header = label !== lastGrade ? `<div class="group-header">${escapeHtml(label)}</div>` : "";
+      lastGrade = label;
+      return (
+        header +
+        `
     <div class="contact-card">
       <div class="contact-name">${escapeHtml(c.prenom || "")} ${escapeHtml(c.nom || "")}</div>
-      ${c.grade ? `<div class="contact-grade">${escapeHtml(c.grade)}</div>` : ""}
       <div class="contact-details">
         ${c.telephone ? `<a href="tel:${escapeHtml(c.telephone)}" class="contact-link">📞 ${escapeHtml(c.telephone)}</a>` : ""}
         ${c.email ? `<a href="mailto:${escapeHtml(c.email)}" class="contact-link">✉ ${escapeHtml(c.email)}</a>` : ""}
       </div>
       ${c.notes ? `<div class="contact-notes">${escapeHtml(c.notes)}</div>` : ""}
     </div>`
-    )
+      );
+    })
     .join("");
 
   return `<div class="contact-list">${rows}</div>`;
