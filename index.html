@@ -88,6 +88,21 @@
   .setup-box { background:#fff; border:1px solid #E4E0D6; border-radius:4px; padding:20px; line-height:1.6; font-size:14px; }
   .setup-box code { background:#F5F3EE; padding:2px 6px; border-radius:3px; font-family:'JetBrains Mono',monospace; font-size:12px; }
 
+  .menu-card { display:flex; align-items:center; gap:16px; background:#fff; border:1px solid #E4E0D6; border-radius:4px; padding:22px 20px; text-align:left; width:100%; }
+  .menu-card:hover { border-color:#C8372E; }
+  .menu-card-icon { font-size:34px; line-height:1; flex-shrink:0; }
+  .menu-card-text { display:flex; flex-direction:column; align-items:flex-start; }
+  .menu-card-label { font-family:'Barlow Condensed',sans-serif; font-weight:800; font-size:21px; }
+  .menu-card-sub { font-size:12px; color:#5B6770; margin-top:2px; }
+
+  .contact-list { display:flex; flex-direction:column; gap:10px; }
+  .contact-card { background:#fff; border:1px solid #E4E0D6; border-radius:4px; padding:14px 16px; }
+  .contact-name { font-family:'Barlow Condensed',sans-serif; font-weight:800; font-size:19px; }
+  .contact-grade { font-family:'JetBrains Mono',monospace; font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:#5B6770; margin-top:2px; }
+  .contact-details { display:flex; gap:16px; flex-wrap:wrap; margin-top:8px; }
+  .contact-link { color:#C8372E; font-size:13px; text-decoration:none; font-weight:600; }
+  .contact-notes { font-size:12px; color:#5B6770; font-style:italic; margin-top:6px; }
+
   @keyframes spin { to { transform: rotate(360deg); } }
   .spinner { animation: spin 0.9s linear infinite; display:block; }
 </style>
@@ -98,11 +113,14 @@
     <div class="brand-row">
       <div class="brand-mark"></div>
       <div>
-        <h1 class="brand-title">INVENTAIRE VÉHICULES</h1>
-        <p class="brand-sub">POSTE&nbsp;· CONTRÔLE MATÉRIEL</p>
+        <h1 class="brand-title" id="brandTitle">CSP PRIVAS</h1>
+        <p class="brand-sub" id="brandSub">MENU PRINCIPAL</p>
       </div>
     </div>
-    <button id="headerBtn" class="icon-btn">⚙</button>
+    <div style="display:flex; gap:8px;">
+      <button id="homeBtn" class="icon-btn" style="display:none;" title="Menu principal">⌂</button>
+      <button id="headerBtn" class="icon-btn" style="display:none;">⚙</button>
+    </div>
   </div>
 </header>
 <main id="app"></main>
@@ -112,7 +130,7 @@
 // CONFIGURATION — colle ici l'URL de ton Google Apps Script Web App
 // (voir GUIDE-COMPLET.md)
 // =====================================================================
-const API_URL = "https://script.google.com/macros/s/AKfycbyjD_vbtkqP77Yi6i-oNn8yW06CaNvoTknJd8Q7I46QaCLfNs5AV2H1Ee2LoTtZs6lJnw/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycbwTSwe4utdn48-78KdVHC4EXUSXhUvlDWYq9-EL62vo8bH7RHCD0FgCtHwORAuk70OBTQ/exec";
 
 // ---------------------------------------------------------------------
 // State
@@ -120,13 +138,16 @@ const API_URL = "https://script.google.com/macros/s/AKfycbyjD_vbtkqP77Yi6i-oNn8y
 let state = {
   config: null,
   history: [],
-  view: "dashboard", // dashboard | detail | form | config | historyList | historyDetail
+  view: "home", // home | dashboard | detail | form | config | historyList | historyDetail | directory | directoryConfig
   selectedVehicleId: null,
   selectedEntryId: null,
   loading: true,
   error: null,
   isAdmin: false,
   adminPin: "",
+  personnel: null,
+  isDirectoryUnlocked: false,
+  directoryPin: "",
 };
 
 const STATUS = {
@@ -240,6 +261,45 @@ async function requireAdmin() {
   }
 }
 
+async function requireDirectoryView() {
+  if (state.isAdmin) {
+    state.directoryPin = state.adminPin;
+    return true;
+  }
+  if (state.isDirectoryUnlocked) return true;
+  const pin = prompt("Code de consultation de l'annuaire :");
+  if (pin === null) return false;
+  try {
+    const data = await apiGet("checkViewPin", { pin });
+    if (data.ok) {
+      state.isDirectoryUnlocked = true;
+      state.directoryPin = pin;
+      return true;
+    }
+    alert("Code incorrect.");
+    return false;
+  } catch (e) {
+    alert("Impossible de vérifier le code pour le moment.");
+    return false;
+  }
+}
+
+async function ensurePersonnelLoaded() {
+  if (state.personnel !== null) return;
+  try {
+    const data = await apiGet("getPersonnel", { pin: state.directoryPin });
+    state.personnel = data.contacts || [];
+  } catch (e) {
+    state.error = "Impossible de charger l'annuaire : " + e.message;
+    state.personnel = [];
+  }
+}
+
+async function savePersonnelRemote(contacts) {
+  await apiPost("savePersonnel", { contacts, pin: state.adminPin });
+  state.personnel = contacts;
+}
+
 async function saveConfigRemote(cfg) {
   await apiPost("saveConfig", { config: cfg, pin: state.adminPin });
   state.config = cfg;
@@ -284,13 +344,61 @@ function goto(view, vehicleId = null, entryId = null) {
 // ---------------------------------------------------------------------
 // Header button behavior
 // ---------------------------------------------------------------------
-document.getElementById("headerBtn").addEventListener("click", async () => {
-  if (state.view === "config") {
-    goto("dashboard");
-    return;
+function sectionOf(view) {
+  if (view === "home") return "home";
+  if (["directory", "directoryConfig"].includes(view)) return "directory";
+  return "inventory";
+}
+
+function updateHeader() {
+  const section = sectionOf(state.view);
+  const homeBtn = document.getElementById("homeBtn");
+  const headerBtn = document.getElementById("headerBtn");
+  const brandTitle = document.getElementById("brandTitle");
+  const brandSub = document.getElementById("brandSub");
+
+  homeBtn.style.display = section === "home" ? "none" : "flex";
+  headerBtn.style.display = section === "home" ? "none" : "flex";
+
+  if (section === "inventory") {
+    brandTitle.textContent = "INVENTAIRE VÉHICULES";
+    brandSub.textContent = "POSTE · CONTRÔLE MATÉRIEL";
+  } else if (section === "directory") {
+    brandTitle.textContent = "ANNUAIRE DU PERSONNEL";
+    brandSub.textContent = "CSP · CONTACTS";
+  } else {
+    brandTitle.textContent = "CSP PRIVAS";
+    brandSub.textContent = "MENU PRINCIPAL";
   }
-  const ok = await requireAdmin();
-  if (ok) goto("config");
+}
+
+document.getElementById("homeBtn").addEventListener("click", () => goto("home"));
+
+document.getElementById("headerBtn").addEventListener("click", async () => {
+  const section = sectionOf(state.view);
+  if (section === "inventory") {
+    if (state.view === "config") {
+      goto("dashboard");
+      return;
+    }
+    const ok = await requireAdmin();
+    if (ok) goto("config");
+  } else if (section === "directory") {
+    if (state.view === "directoryConfig") {
+      goto("directory");
+      return;
+    }
+    const ok = await requireAdmin();
+    if (!ok) return;
+    state.directoryPin = state.adminPin;
+    if (state.personnel === null) {
+      state.loading = true;
+      render();
+      await ensurePersonnelLoaded();
+      state.loading = false;
+    }
+    goto("directoryConfig");
+  }
 });
 
 // ---------------------------------------------------------------------
@@ -298,6 +406,7 @@ document.getElementById("headerBtn").addEventListener("click", async () => {
 // ---------------------------------------------------------------------
 function render() {
   const app = document.getElementById("app");
+  updateHeader();
 
   if (!API_URL || API_URL.indexOf("COLLE_ICI") === 0) {
     app.innerHTML = `
@@ -321,6 +430,13 @@ function render() {
     html += `<div class="err-banner">⚠ ${state.error}</div>`;
   }
 
+  if (state.view === "home") {
+    html += renderHome();
+    app.innerHTML = html;
+    attachHandlers();
+    return;
+  }
+
   if (!state.config) {
     app.innerHTML = html;
     return;
@@ -332,9 +448,34 @@ function render() {
   else if (state.view === "config") html += renderConfig();
   else if (state.view === "historyList") html += renderHistoryList();
   else if (state.view === "historyDetail") html += renderHistoryDetail();
+  else if (state.view === "directory") html += renderDirectoryList();
+  else if (state.view === "directoryConfig") html += renderDirectoryConfig();
 
   app.innerHTML = html;
   attachHandlers();
+}
+
+// ---------------------------------------------------------------------
+// Home menu
+// ---------------------------------------------------------------------
+function renderHome() {
+  return `
+    <div style="display:flex; flex-direction:column; gap:16px; margin-top:4px;">
+      <button class="menu-card" data-action="goDashboard">
+        <span class="menu-card-icon">🚒</span>
+        <span class="menu-card-text">
+          <span class="menu-card-label">Inventaire véhicules</span>
+          <span class="menu-card-sub">Vérifier et suivre le matériel des véhicules</span>
+        </span>
+      </button>
+      <button class="menu-card" data-action="goDirectory">
+        <span class="menu-card-icon">📇</span>
+        <span class="menu-card-text">
+          <span class="menu-card-label">Annuaire du personnel</span>
+          <span class="menu-card-sub">Coordonnées des membres du centre</span>
+        </span>
+      </button>
+    </div>`;
 }
 
 // ---------------------------------------------------------------------
@@ -538,6 +679,72 @@ function renderForm() {
 }
 
 // ---------------------------------------------------------------------
+// Directory (Annuaire)
+// ---------------------------------------------------------------------
+function renderDirectoryList() {
+  const contacts = (state.personnel || [])
+    .slice()
+    .sort((a, b) => (a.nom || "").localeCompare(b.nom || "", "fr"));
+
+  if (!contacts.length) {
+    return `<div class="empty-box"><p class="muted">Aucun contact enregistré pour le moment.</p></div>`;
+  }
+
+  const rows = contacts
+    .map(
+      (c) => `
+    <div class="contact-card">
+      <div class="contact-name">${escapeHtml(c.prenom || "")} ${escapeHtml(c.nom || "")}</div>
+      ${c.grade ? `<div class="contact-grade">${escapeHtml(c.grade)}</div>` : ""}
+      <div class="contact-details">
+        ${c.telephone ? `<a href="tel:${escapeHtml(c.telephone)}" class="contact-link">📞 ${escapeHtml(c.telephone)}</a>` : ""}
+        ${c.email ? `<a href="mailto:${escapeHtml(c.email)}" class="contact-link">✉ ${escapeHtml(c.email)}</a>` : ""}
+      </div>
+      ${c.notes ? `<div class="contact-notes">${escapeHtml(c.notes)}</div>` : ""}
+    </div>`
+    )
+    .join("");
+
+  return `<div class="contact-list">${rows}</div>`;
+}
+
+let personnelDraft = null;
+let personnelDirty = false;
+
+function renderDirectoryConfig() {
+  if (!personnelDraft) personnelDraft = JSON.parse(JSON.stringify(state.personnel || []));
+
+  const rows = personnelDraft
+    .map(
+      (c) => `
+    <div class="config-card">
+      <div class="config-card-head">
+        <input class="input-inline-small" data-role="contactPrenom" data-contact="${c.id}" value="${escapeHtml(c.prenom || "")}" placeholder="Prénom" style="max-width:130px;" />
+        <input class="input-inline-small" data-role="contactNom" data-contact="${c.id}" value="${escapeHtml(c.nom || "")}" placeholder="Nom" style="max-width:130px;" />
+        <input class="input-inline-small" data-role="contactGrade" data-contact="${c.id}" value="${escapeHtml(c.grade || "")}" placeholder="Grade / fonction" />
+        <button class="danger-btn" data-action="removeContact" data-contact="${c.id}">🗑</button>
+      </div>
+      <div class="config-item-row">
+        <input class="input-inline-small" data-role="contactTelephone" data-contact="${c.id}" value="${escapeHtml(c.telephone || "")}" placeholder="Téléphone" />
+        <input class="input-inline-small" data-role="contactEmail" data-contact="${c.id}" value="${escapeHtml(c.email || "")}" placeholder="Email" />
+      </div>
+      <input class="input-inline-small" data-role="contactNotes" data-contact="${c.id}" value="${escapeHtml(c.notes || "")}" placeholder="Remarque (optionnel)" style="width:100%; margin-top:6px;" />
+    </div>`
+    )
+    .join("");
+
+  return `
+    <h2 class="page-title">Annuaire — modification</h2>
+    <p class="page-subtitle">Ajouter, modifier ou supprimer des contacts</p>
+    ${rows}
+    <button class="add-vehicle-btn" data-action="addContact">+ Ajouter un contact</button>
+    <div class="config-actions">
+      <button class="btn-secondary" data-action="directory">Retour</button>
+      <button class="btn-primary" id="savePersonnelBtn" ${personnelDirty ? "" : "disabled"}>Enregistrer les modifications</button>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------
 let configDraft = null;
@@ -641,8 +848,42 @@ function attachHandlers() {
       const vehicleId = el.dataset.vehicle;
       const itemId = el.dataset.item;
       const entryId = el.dataset.entry;
+      const contactId = el.dataset.contact;
 
-      if (action === "dashboard") goto("dashboard");
+      if (action === "goDashboard") goto("dashboard");
+      else if (action === "goDirectory") {
+        const ok = await requireDirectoryView();
+        if (!ok) return;
+        if (state.personnel === null) {
+          state.loading = true;
+          render();
+          await ensurePersonnelLoaded();
+          state.loading = false;
+        }
+        goto("directory");
+      }
+      else if (action === "directory") {
+        const ok = await requireDirectoryView();
+        if (!ok) return;
+        if (state.personnel === null) {
+          state.loading = true;
+          render();
+          await ensurePersonnelLoaded();
+          state.loading = false;
+        }
+        goto("directory");
+      }
+      else if (action === "addContact") {
+        personnelDraft.push({ id: uid(), prenom: "", nom: "", grade: "", telephone: "", email: "", notes: "" });
+        personnelDirty = true;
+        render();
+      }
+      else if (action === "removeContact") {
+        personnelDraft = personnelDraft.filter((c) => c.id !== contactId);
+        personnelDirty = true;
+        render();
+      }
+      else if (action === "dashboard") goto("dashboard");
       else if (action === "detail") goto("detail", vehicleId);
       else if (action === "form") goto("form", vehicleId);
       else if (action === "config") { configDraft = null; configDirty = false; goto("config"); }
@@ -873,6 +1114,42 @@ function attachHandlers() {
         state.error = "Échec de l'enregistrement de la configuration : " + e.message;
         saveConfigBtn.disabled = false;
         saveConfigBtn.textContent = "Enregistrer les modifications";
+        render();
+      }
+    });
+  }
+
+  const contactFields = [
+    ["contactPrenom", "prenom"],
+    ["contactNom", "nom"],
+    ["contactGrade", "grade"],
+    ["contactTelephone", "telephone"],
+    ["contactEmail", "email"],
+    ["contactNotes", "notes"],
+  ];
+  contactFields.forEach(([role, field]) => {
+    app.querySelectorAll(`[data-role="${role}"]`).forEach((el) =>
+      el.addEventListener("input", (e) => {
+        const c = personnelDraft.find((c) => c.id === el.dataset.contact);
+        if (c) c[field] = e.target.value;
+        personnelDirty = true;
+      })
+    );
+  });
+
+  const savePersonnelBtn = document.getElementById("savePersonnelBtn");
+  if (savePersonnelBtn) {
+    savePersonnelBtn.addEventListener("click", async () => {
+      savePersonnelBtn.disabled = true;
+      savePersonnelBtn.textContent = "Enregistrement…";
+      try {
+        await savePersonnelRemote(personnelDraft);
+        personnelDirty = false;
+        goto("directory");
+      } catch (e) {
+        state.error = "Échec de l'enregistrement de l'annuaire : " + e.message;
+        savePersonnelBtn.disabled = false;
+        savePersonnelBtn.textContent = "Enregistrer les modifications";
         render();
       }
     });
