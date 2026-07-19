@@ -138,7 +138,7 @@ const API_URL = "https://script.google.com/macros/s/AKfycbwTSwe4utdn48-78KdVHC4E
 let state = {
   config: null,
   history: [],
-  view: "home", // home | dashboard | detail | form | config | historyList | historyDetail | directory | directoryConfig
+  view: "home", // home | dashboard | detail | form | config | historyList | historyDetail | directory | directoryConfig | recap
   selectedVehicleId: null,
   selectedEntryId: null,
   loading: true,
@@ -148,6 +148,8 @@ let state = {
   personnel: null,
   isDirectoryUnlocked: false,
   directoryPin: "",
+  recapVehicleId: null,
+  recapDefects: null,
 };
 
 const STATUS = {
@@ -200,6 +202,7 @@ function normalizeConfig(cfg) {
   cfg.vehicles.forEach((v) => {
     if (!v.groups) v.groups = [];
     if (typeof v.hidden !== "boolean") v.hidden = false;
+    if (typeof v.checkFrequencyDays !== "number" || !v.checkFrequencyDays) v.checkFrequencyDays = null;
     v.items.forEach((it) => {
       if (!it.groupId && it.group && it.group.trim()) {
         const name = it.group.trim();
@@ -278,9 +281,45 @@ async function checkAdmin(pin) {
   return !!data.ok;
 }
 
+// Modale de saisie de code avec clavier numérique (au lieu du prompt() natif,
+// qui ouvre un clavier alphabétique complet sur mobile).
+function showPinPrompt(title) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.style.cssText = "position:fixed; inset:0; background:rgba(28,31,34,0.6); display:flex; align-items:center; justify-content:center; z-index:1000; padding:20px;";
+    overlay.innerHTML = `
+      <div style="background:#fff; border-radius:6px; padding:24px; max-width:300px; width:100%;">
+        <p style="font-family:'Barlow Condensed',sans-serif; font-weight:800; font-size:18px; margin:0 0 14px;">${escapeHtml(title)}</p>
+        <input id="pinModalInput" type="tel" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
+          style="width:100%; border:1px solid #D8D3C6; border-radius:4px; padding:12px; font-size:22px; letter-spacing:0.2em; text-align:center; font-family:'JetBrains Mono',monospace;" />
+        <div style="display:flex; gap:10px; margin-top:16px;">
+          <button id="pinModalCancel" class="btn-secondary" style="flex:1; justify-content:center;">Annuler</button>
+          <button id="pinModalOk" class="btn-primary" style="flex:1; justify-content:center;">Valider</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const input = overlay.querySelector("#pinModalInput");
+    input.focus();
+
+    const cleanup = (value) => {
+      document.body.removeChild(overlay);
+      resolve(value);
+    };
+    overlay.querySelector("#pinModalCancel").addEventListener("click", () => cleanup(null));
+    overlay.querySelector("#pinModalOk").addEventListener("click", () => cleanup(input.value));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") cleanup(input.value);
+      if (e.key === "Escape") cleanup(null);
+    });
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) cleanup(null);
+    });
+  });
+}
+
 async function requireAdmin() {
   if (state.isAdmin) return true;
-  const pin = prompt("Code administrateur requis :");
+  const pin = await showPinPrompt("Code administrateur requis");
   if (pin === null) return false;
   try {
     const ok = await checkAdmin(pin);
@@ -303,7 +342,7 @@ async function requireDirectoryView() {
     return true;
   }
   if (state.isDirectoryUnlocked) return true;
-  const pin = prompt("Code de consultation de l'annuaire :");
+  const pin = await showPinPrompt("Code de consultation de l'annuaire");
   if (pin === null) return false;
   try {
     const data = await apiGet("checkViewPin", { pin });
@@ -357,11 +396,40 @@ function latestFor(vehicleId) {
   return entries.slice().sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0];
 }
 
+function isOverdue(vehicle, record) {
+  if (!vehicle.checkFrequencyDays || !record) return false;
+  const days = (Date.now() - new Date(record.timestamp).getTime()) / (1000 * 60 * 60 * 24);
+  return days > vehicle.checkFrequencyDays;
+}
+
 function historyFor(vehicleId) {
   return state.history
     .filter((h) => h.vehicleId === vehicleId)
     .slice()
     .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+}
+
+function renderRecap() {
+  const v = state.config.vehicles.find((x) => x.id === state.recapVehicleId);
+  if (!v) return "";
+  const rows = (state.recapDefects || [])
+    .map((d) => {
+      const meta = STATUS[d.status];
+      return `<li class="item-row" style="background:${meta.bg}">
+        <span style="color:${meta.color}">●</span>
+        <span class="item-name">${escapeHtml(d.name)}${d.groupName ? ` <span style="color:#8A8F94;">(${escapeHtml(d.groupName)})</span>` : ""}</span>
+        <span class="item-status" style="color:${meta.color}">${meta.label}</span>
+      </li>`;
+    })
+    .join("");
+
+  return `
+    <div class="err-banner" style="background:#FBEAE8; color:#C8372E; align-items:flex-start; flex-direction:column; gap:4px;">
+      <strong style="font-family:'Barlow Condensed',sans-serif; font-weight:800; font-size:16px; letter-spacing:0.02em;">⚠ Merci de reporter ces éléments sur le tableau</strong>
+      <span style="font-size:13px;">${(state.recapDefects || []).length} élément(s) à signaler sur ${escapeHtml(v.name)} :</span>
+    </div>
+    <ul class="item-list">${rows}</ul>
+    <button class="btn-primary" data-action="detail" data-vehicle="${v.id}">J'ai bien noté →</button>`;
 }
 
 function formatDate(iso) {
@@ -486,6 +554,7 @@ function render() {
   else if (state.view === "historyDetail") html += renderHistoryDetail();
   else if (state.view === "directory") html += renderDirectoryList();
   else if (state.view === "directoryConfig") html += renderDirectoryConfig();
+  else if (state.view === "recap") html += renderRecap();
 
   app.innerHTML = html;
   attachHandlers();
@@ -523,8 +592,21 @@ function renderDashboard() {
     .map((v) => {
       const rec = latestFor(v.id);
       const problems = rec ? Object.values(rec.results).filter((s) => s !== "ok").length : null;
-      const flagColor = !rec ? "#8A8F94" : problems === 0 ? "#3A7D5C" : "#C8372E";
-      const flagLabel = !rec ? "NON VÉRIFIÉ" : problems === 0 ? "COMPLET" : `${problems} À SIGNALER`;
+      const overdue = isOverdue(v, rec);
+      let flagColor, flagLabel;
+      if (rec && problems > 0) {
+        flagColor = "#C8372E";
+        flagLabel = `${problems} À SIGNALER`;
+      } else if (!rec) {
+        flagColor = "#8A8F94";
+        flagLabel = "NON VÉRIFIÉ";
+      } else if (overdue) {
+        flagColor = "#E8A33D";
+        flagLabel = "À VÉRIFIER";
+      } else {
+        flagColor = "#3A7D5C";
+        flagLabel = "COMPLET";
+      }
       return `
         <button class="card" data-action="detail" data-vehicle="${v.id}">
           <div class="card-flag" style="background:${flagColor}">${flagLabel}</div>
@@ -547,6 +629,9 @@ function renderDetail() {
   if (!v) return "";
   const rec = latestFor(v.id);
   const hist = historyFor(v.id);
+  const overdueBanner = isOverdue(v, rec)
+    ? `<div class="err-banner" style="background:#FCF1DF; color:#E8A33D;">⏰ À vérifier — dernier contrôle il y a plus de ${v.checkFrequencyDays} jour(s).</div>`
+    : "";
 
   let body;
   if (rec) {
@@ -580,6 +665,7 @@ function renderDetail() {
     <button class="back-link" data-action="dashboard">← Tableau de bord</button>
     <h2 class="page-title">${escapeHtml(v.name)}</h2>
     <p class="page-subtitle">${escapeHtml(v.type)}</p>
+    ${overdueBanner}
     ${body}
     <div style="display:flex; gap:10px; flex-wrap:wrap;">
       <button class="btn-primary" data-action="form" data-vehicle="${v.id}">${rec ? "Refaire l'inventaire" : "Faire l'inventaire"}</button>
@@ -860,6 +946,12 @@ function renderConfig() {
           Indisponible — masquer ce véhicule du tableau de bord
         </label>
 
+        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#5B6770; margin-bottom:10px;">
+          Vérifier au moins tous les
+          <input type="number" min="1" data-role="vehicleFrequency" data-vehicle="${v.id}" value="${v.checkFrequencyDays || ""}" placeholder="—" style="width:60px; border:1px solid #D8D3C6; border-radius:4px; padding:4px 6px; text-align:center;" />
+          jour(s) (laisser vide = pas de rappel)
+        </label>
+
         ${collapsed ? `<p class="muted" style="font-size:12px; margin:0;">${v.items.length} équipement(s) · ${v.groups.length} lieu(x)</p>` : `
         <p style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#5B6770; margin:12px 0 6px;">Lieux dans ce véhicule</p>
         ${groupsList}
@@ -980,7 +1072,7 @@ function attachHandlers() {
         render();
       }
       else if (action === "addVehicle") {
-        configDraft.vehicles.push({ id: uid(), name: "Nouveau véhicule", type: "", groups: [], items: [], hidden: false });
+        configDraft.vehicles.push({ id: uid(), name: "Nouveau véhicule", type: "", groups: [], items: [], hidden: false, checkFrequencyDays: null });
         configDirty = true;
         render();
       }
@@ -1007,6 +1099,7 @@ function attachHandlers() {
           name: original.name + " (copie)",
           type: original.type,
           hidden: original.hidden,
+          checkFrequencyDays: original.checkFrequencyDays,
           groups: newGroups,
           items: newItems,
         };
@@ -1110,14 +1203,32 @@ function attachHandlers() {
       formDraft.saving = true;
       render();
       try {
-        await submitInventoryRemote({
+        const record = {
           vehicleId: v.id,
           checkedBy: formDraft.checkedBy.trim(),
           timestamp: new Date().toISOString(),
           results: formDraft.results,
           notes: formDraft.notes.trim(),
-        });
-        goto("detail", v.id);
+        };
+        await submitInventoryRemote(record);
+
+        const groupNameById = {};
+        v.groups.forEach((g) => { groupNameById[g.id] = g.name; });
+        const defects = v.items
+          .filter((it) => record.results[it.id] && record.results[it.id] !== "ok")
+          .map((it) => ({
+            name: it.name,
+            status: record.results[it.id],
+            groupName: it.groupId ? groupNameById[it.groupId] || "" : "",
+          }));
+
+        if (defects.length) {
+          state.recapVehicleId = v.id;
+          state.recapDefects = defects;
+          goto("recap", v.id);
+        } else {
+          goto("detail", v.id);
+        }
       } catch (e) {
         state.error = "L'enregistrement a échoué : " + e.message;
         formDraft.saving = false;
@@ -1134,6 +1245,13 @@ function attachHandlers() {
   );
   app.querySelectorAll('[data-role="vehicleHidden"]').forEach((el) =>
     el.addEventListener("change", (e) => { configDraft.vehicles.find((v) => v.id === el.dataset.vehicle).hidden = e.target.checked; configDirty = true; render(); })
+  );
+  app.querySelectorAll('[data-role="vehicleFrequency"]').forEach((el) =>
+    el.addEventListener("input", (e) => {
+      const n = parseInt(e.target.value, 10);
+      configDraft.vehicles.find((v) => v.id === el.dataset.vehicle).checkFrequencyDays = n > 0 ? n : null;
+      configDirty = true;
+    })
   );
   app.querySelectorAll('[data-role="itemName"]').forEach((el) =>
     el.addEventListener("input", (e) => {
