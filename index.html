@@ -627,6 +627,10 @@ function renderDashboard() {
 function renderDetail() {
   const v = state.config.vehicles.find((x) => x.id === state.selectedVehicleId);
   if (!v) return "";
+  if (state._detailVehicleId !== v.id) {
+    state.detailShowAll = false;
+    state._detailVehicleId = v.id;
+  }
   const rec = latestFor(v.id);
   const hist = historyFor(v.id);
   const overdueBanner = isOverdue(v, rec)
@@ -635,11 +639,15 @@ function renderDetail() {
 
   let body;
   if (rec) {
+    const defectCount = Object.values(rec.results).filter((s) => s !== "ok").length;
+    const showAll = state.detailShowAll;
     const groups = groupItemsByLocation(v);
     const rows = groups
       .map((g) => {
+        const visibleItems = showAll ? g.items : g.items.filter((it) => (rec.results[it.id] || "ok") !== "ok");
+        if (!visibleItems.length) return "";
         const header = g.name ? `<div class="group-header">${escapeHtml(g.name)}</div>` : "";
-        const itemRows = g.items
+        const itemRows = visibleItems
           .map((it) => {
             const s = rec.results[it.id] || "ok";
             const meta = STATUS[s];
@@ -653,10 +661,19 @@ function renderDetail() {
         return header + itemRows;
       })
       .join("");
+
+    const toggleBtn = `<button class="btn-ghost" data-action="toggleDetailShowAll" style="margin-bottom:10px;">${showAll ? "Ne voir que les défauts" : "Voir tout l'équipement"}</button>`;
+
+    const listOrSuccess =
+      !showAll && defectCount === 0
+        ? `<div class="empty-box"><p class="muted">✅ Rien à signaler — tout est en ordre.</p></div>`
+        : `<ul class="item-list">${rows}</ul>`;
+
     body = `
       <p class="meta-line">Vérifié par <strong>${escapeHtml(rec.checkedBy)}</strong> le ${formatDate(rec.timestamp)}</p>
       ${rec.notes ? `<p class="notes-box">« ${escapeHtml(rec.notes)} »</p>` : ""}
-      <ul class="item-list">${rows}</ul>`;
+      ${toggleBtn}
+      ${listOrSuccess}`;
   } else {
     body = `<div class="empty-box"><p class="muted">Aucun inventaire enregistré pour ce véhicule.</p></div>`;
   }
@@ -1056,6 +1073,10 @@ function attachHandlers() {
       else if (action === "prevStep") {
         formDraft.step = Math.max(0, formDraft.step - 1);
         formDraft.touched = false;
+        render();
+      }
+      else if (action === "toggleDetailShowAll") {
+        state.detailShowAll = !state.detailShowAll;
         render();
       }
       else if (action === "toggleCollapse") {
