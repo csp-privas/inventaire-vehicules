@@ -216,6 +216,17 @@ const GRADE_DISPLAY_ORDER = [
 
 const uid = () => Math.random().toString(36).slice(2, 9);
 
+// "Jean-Marc" -> "jean-marc", "Élodie" -> "elodie" (accents retirés, minuscules, espaces -> points)
+function normalizeUsernamePart(str) {
+  return (str || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "");
+}
+
 // Ensures older configs (free-text "group" field) still work: migrates any
 // legacy text group into a real location entry the first time it's loaded.
 function normalizeConfig(cfg) {
@@ -810,6 +821,7 @@ function renderUsersManage() {
     <button class="back-link" data-action="home">← Menu principal</button>
     <h2 class="page-title">Utilisateurs</h2>
     <p class="page-subtitle">Comptes et droits d'accès. Un administrateur a automatiquement accès à l'annuaire.</p>
+    <button class="btn-ghost" data-action="generateUsersFromDirectory" style="margin-bottom:16px;">📇 Créer les comptes depuis l'annuaire (sauf « Autre »)</button>
     ${rows}
     <button class="add-vehicle-btn" data-action="addUser">+ Ajouter un utilisateur</button>
     <div class="config-actions">
@@ -1482,6 +1494,44 @@ function attachHandlers() {
         usersDraft = usersDraft.filter((u) => u.id !== el.dataset.user);
         usersDirty = true;
         render();
+      }
+      else if (action === "generateUsersFromDirectory") {
+        state.loading = true;
+        render();
+        try {
+          if (state.personnel === null) await ensurePersonnelLoaded();
+        } finally {
+          state.loading = false;
+        }
+        const existingUsernames = new Set(usersDraft.map((u) => (u.username || "").toLowerCase()));
+        let created = 0;
+        let skippedNoName = 0;
+        (state.personnel || [])
+          .filter((c) => (c.grade || "") !== "Autre")
+          .forEach((c) => {
+            const prenom = (c.prenom || "").trim();
+            const nom = (c.nom || "").trim();
+            if (!prenom || !nom) { skippedNoName++; return; }
+            const username = `${normalizeUsernamePart(prenom)}.${normalizeUsernamePart(nom)}`;
+            if (!username || username === "." || existingUsernames.has(username)) return;
+            usersDraft.push({
+              id: uid(),
+              username,
+              displayName: `${prenom} ${nom}`,
+              isAdmin: false,
+              canViewDirectory: false,
+              newPassword: "1807",
+            });
+            existingUsernames.add(username);
+            created++;
+          });
+        usersDirty = usersDirty || created > 0;
+        render();
+        alert(
+          `${created} compte(s) créé(s) avec le mot de passe "1807".` +
+          (skippedNoName ? ` ${skippedNoName} contact(s) ignoré(s) (prénom ou nom manquant).` : "") +
+          `\n\nPense à cliquer sur "Enregistrer les modifications" pour valider.`
+        );
       }
       else if (action === "dashboard") goto("dashboard");
       else if (action === "detail") goto("detail", vehicleId);
