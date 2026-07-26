@@ -103,6 +103,13 @@
   .contact-link { color:#C8372E; font-size:13px; text-decoration:none; font-weight:600; }
   .contact-notes { font-size:12px; color:#5B6770; font-style:italic; margin-top:6px; }
 
+  .resa-row { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; background:#fff; border:1px solid #E4E0D6; border-radius:4px; padding:12px 14px; margin-bottom:8px; }
+  .resa-row.past { opacity:0.5; }
+  .resa-dates { font-family:'JetBrains Mono',monospace; font-size:12px; color:#5B6770; }
+  .resa-person { font-weight:600; font-size:14px; margin-top:2px; }
+  .resa-motif { font-size:12px; color:#5B6770; margin-top:2px; }
+  .resa-vehicle-tag { font-family:'JetBrains Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:0.05em; color:#C8372E; margin-bottom:4px; }
+
   @keyframes spin { to { transform: rotate(360deg); } }
   .spinner { animation: spin 0.9s linear infinite; display:block; }
 </style>
@@ -117,9 +124,11 @@
         <p class="brand-sub" id="brandSub">MENU PRINCIPAL</p>
       </div>
     </div>
-    <div style="display:flex; gap:8px;">
+    <div style="display:flex; gap:8px; align-items:center;">
+      <span id="userBadge" style="display:none; font-family:'JetBrains Mono',monospace; font-size:11px; color:#8A8F94;"></span>
       <button id="homeBtn" class="icon-btn" style="display:none;" title="Menu principal">⌂</button>
       <button id="headerBtn" class="icon-btn" style="display:none;">⚙</button>
+      <button id="logoutBtn" class="icon-btn" style="display:none;" title="Déconnexion">⏻</button>
     </div>
   </div>
 </header>
@@ -130,7 +139,7 @@
 // CONFIGURATION — colle ici l'URL de ton Google Apps Script Web App
 // (voir GUIDE-COMPLET.md)
 // =====================================================================
-const API_URL = "https://script.google.com/macros/s/AKfycbwTSwe4utdn48-78KdVHC4EXUSXhUvlDWYq9-EL62vo8bH7RHCD0FgCtHwORAuk70OBTQ/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycbyw2Yv-CDgm1woPJwbFUzSNhYIXmhpQXZtQ9ys024IqlzwHsLf1PqkpG7DjLuNhfY8TpA/exec";
 
 // ---------------------------------------------------------------------
 // State
@@ -138,19 +147,30 @@ const API_URL = "https://script.google.com/macros/s/AKfycbwTSwe4utdn48-78KdVHC4E
 let state = {
   config: null,
   history: [],
-  view: "home", // home | dashboard | detail | form | config | historyList | historyDetail | directory | directoryConfig | recap
+  view: "login", // login | home | dashboard | detail | form | config | historyList | historyDetail | directory | directoryConfig | recap | reservation | reservationVehicle | reservationManage | usersManage
   selectedVehicleId: null,
   selectedEntryId: null,
-  loading: true,
+  loading: false,
   error: null,
-  isAdmin: false,
-  adminPin: "",
+  currentUser: null, // { id, username, displayName, isAdmin, canViewDirectory }
+  currentPassword: "",
   personnel: null,
-  isDirectoryUnlocked: false,
-  directoryPin: "",
   recapVehicleId: null,
   recapDefects: null,
+  reservations: null,
+  reservationVehicles: null,
+  users: null,
 };
+
+const SESSION_KEY = "csp_privas_session";
+
+function isAdminUser() {
+  return !!(state.currentUser && state.currentUser.isAdmin);
+}
+
+function canViewDirectoryUser() {
+  return !!(state.currentUser && (state.currentUser.isAdmin || state.currentUser.canViewDirectory));
+}
 
 const STATUS = {
   ok: { label: "OK", color: "#3A7D5C", bg: "#E7F1EB" },
@@ -246,8 +266,9 @@ async function apiGet(action, params = {}) {
   return data;
 }
 
-// Pour les envois volumineux (config, inventaire) : le corps de la requête
-// n'a pas la limite de longueur d'une URL, contrairement à apiGet.
+// Pour les envois volumineux et tout ce qui nécessite des identifiants :
+// le corps de la requête n'a pas la limite de longueur d'une URL, et les
+// identifiants n'apparaissent pas dans l'URL/les journaux.
 async function apiPost(action, payload = {}) {
   const res = await fetch(API_URL, {
     method: "POST",
@@ -258,6 +279,10 @@ async function apiPost(action, payload = {}) {
   const data = await res.json();
   if (data.error) throw new Error(data.error);
   return data;
+}
+
+function creds() {
+  return { username: state.currentUser ? state.currentUser.username : "", password: state.currentPassword };
 }
 
 async function loadAll() {
@@ -276,93 +301,51 @@ async function loadAll() {
   }
 }
 
-async function checkAdmin(pin) {
-  const data = await apiGet("checkAdmin", { pin });
-  return !!data.ok;
+// ---------------------------------------------------------------------
+// Authentification
+// ---------------------------------------------------------------------
+async function attemptLogin(username, password) {
+  const data = await apiPost("login", { username, password });
+  return data.ok ? data.user : null;
 }
 
-// Modale de saisie de code avec clavier numérique (au lieu du prompt() natif,
-// qui ouvre un clavier alphabétique complet sur mobile).
-function showPinPrompt(title) {
-  return new Promise((resolve) => {
-    const overlay = document.createElement("div");
-    overlay.style.cssText = "position:fixed; inset:0; background:rgba(28,31,34,0.6); display:flex; align-items:center; justify-content:center; z-index:1000; padding:20px;";
-    overlay.innerHTML = `
-      <div style="background:#fff; border-radius:6px; padding:24px; max-width:300px; width:100%;">
-        <p style="font-family:'Barlow Condensed',sans-serif; font-weight:800; font-size:18px; margin:0 0 14px;">${escapeHtml(title)}</p>
-        <input id="pinModalInput" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
-          style="width:100%; border:1px solid #D8D3C6; border-radius:4px; padding:12px; font-size:22px; letter-spacing:0.2em; text-align:center; font-family:'JetBrains Mono',monospace;" />
-        <div style="display:flex; gap:10px; margin-top:16px;">
-          <button id="pinModalCancel" class="btn-secondary" style="flex:1; justify-content:center;">Annuler</button>
-          <button id="pinModalOk" class="btn-primary" style="flex:1; justify-content:center;">Valider</button>
-        </div>
-      </div>`;
-    document.body.appendChild(overlay);
-    const input = overlay.querySelector("#pinModalInput");
-    input.focus();
-
-    const cleanup = (value) => {
-      document.body.removeChild(overlay);
-      resolve(value);
-    };
-    overlay.querySelector("#pinModalCancel").addEventListener("click", () => cleanup(null));
-    overlay.querySelector("#pinModalOk").addEventListener("click", () => cleanup(input.value));
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") cleanup(input.value);
-      if (e.key === "Escape") cleanup(null);
-    });
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) cleanup(null);
-    });
-  });
-}
-
-async function requireAdmin() {
-  if (state.isAdmin) return true;
-  const pin = await showPinPrompt("Code administrateur requis");
-  if (pin === null) return false;
+function saveSession(username, password) {
   try {
-    const ok = await checkAdmin(pin);
-    if (ok) {
-      state.isAdmin = true;
-      state.adminPin = pin;
-      return true;
-    }
-    alert("Code incorrect.");
-    return false;
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ username, password }));
+  } catch (e) {}
+}
+
+function clearSession() {
+  try {
+    localStorage.removeItem(SESSION_KEY);
+  } catch (e) {}
+}
+
+function readSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
   } catch (e) {
-    alert("Impossible de vérifier le code pour le moment.");
-    return false;
+    return null;
   }
 }
 
-async function requireDirectoryView() {
-  if (state.isAdmin) {
-    state.directoryPin = state.adminPin;
-    return true;
-  }
-  if (state.isDirectoryUnlocked) return true;
-  const pin = await showPinPrompt("Code de consultation de l'annuaire");
-  if (pin === null) return false;
-  try {
-    const data = await apiGet("checkViewPin", { pin });
-    if (data.ok) {
-      state.isDirectoryUnlocked = true;
-      state.directoryPin = pin;
-      return true;
-    }
-    alert("Code incorrect.");
-    return false;
-  } catch (e) {
-    alert("Impossible de vérifier le code pour le moment.");
-    return false;
-  }
+function requireAdminOrAlert() {
+  if (isAdminUser()) return true;
+  alert("Cette action est réservée aux administrateurs.");
+  return false;
+}
+
+function requireDirectoryOrAlert() {
+  if (canViewDirectoryUser()) return true;
+  alert("Tu n'as pas accès à l'annuaire. Contacte un administrateur.");
+  return false;
 }
 
 async function ensurePersonnelLoaded() {
   if (state.personnel !== null) return;
   try {
-    const data = await apiGet("getPersonnel", { pin: state.directoryPin });
+    const data = await apiPost("getPersonnel", creds());
     state.personnel = data.contacts || [];
   } catch (e) {
     state.error = "Impossible de charger l'annuaire : " + e.message;
@@ -371,12 +354,40 @@ async function ensurePersonnelLoaded() {
 }
 
 async function savePersonnelRemote(contacts) {
-  await apiPost("savePersonnel", { contacts, pin: state.adminPin });
+  await apiPost("savePersonnel", { contacts, ...creds() });
   state.personnel = contacts;
 }
 
+async function ensureReservationsLoaded() {
+  if (state.reservations !== null && state.reservationVehicles !== null) return;
+  try {
+    const data = await apiGet("getReservationData");
+    state.reservationVehicles = data.vehicles || [];
+    state.reservations = data.reservations || [];
+  } catch (e) {
+    state.error = "Impossible de charger les réservations : " + e.message;
+    state.reservationVehicles = [];
+    state.reservations = [];
+  }
+}
+
+async function saveReservationVehiclesRemote(vehicles) {
+  await apiPost("saveReservationVehicles", { vehicles, ...creds() });
+  state.reservationVehicles = vehicles;
+}
+
+async function addReservationRemote(reservation) {
+  const res = await apiPost("addReservation", { reservation });
+  state.reservations.push({ ...reservation, id: res.id });
+}
+
+async function deleteReservationRemote(id) {
+  await apiPost("deleteReservation", { id, ...creds() });
+  state.reservations = state.reservations.filter((r) => r.id !== id);
+}
+
 async function saveConfigRemote(cfg) {
-  await apiPost("saveConfig", { config: cfg, pin: state.adminPin });
+  await apiPost("saveConfig", { config: cfg, ...creds() });
   state.config = cfg;
 }
 
@@ -386,8 +397,24 @@ async function submitInventoryRemote(record) {
 }
 
 async function deleteEntryRemote(id) {
-  await apiPost("deleteEntry", { id, pin: state.adminPin });
+  await apiPost("deleteEntry", { id, ...creds() });
   state.history = state.history.filter((h) => h.id !== id);
+}
+
+async function ensureUsersLoaded() {
+  if (state.users !== null) return;
+  try {
+    const data = await apiPost("getUsers", creds());
+    state.users = data.users || [];
+  } catch (e) {
+    state.error = "Impossible de charger les utilisateurs : " + e.message;
+    state.users = [];
+  }
+}
+
+async function saveUsersRemote(users) {
+  await apiPost("saveUsers", { users, ...creds() });
+  state.users = users.map(({ newPassword, ...rest }) => rest);
 }
 
 function latestFor(vehicleId) {
@@ -449,8 +476,10 @@ function goto(view, vehicleId = null, entryId = null) {
 // Header button behavior
 // ---------------------------------------------------------------------
 function sectionOf(view) {
-  if (view === "home") return "home";
+  if (view === "login" || view === "home") return view;
   if (["directory", "directoryConfig"].includes(view)) return "directory";
+  if (["reservation", "reservationVehicle", "reservationManage"].includes(view)) return "reservation";
+  if (view === "usersManage") return "users";
   return "inventory";
 }
 
@@ -458,11 +487,17 @@ function updateHeader() {
   const section = sectionOf(state.view);
   const homeBtn = document.getElementById("homeBtn");
   const headerBtn = document.getElementById("headerBtn");
+  const logoutBtn = document.getElementById("logoutBtn");
+  const userBadge = document.getElementById("userBadge");
   const brandTitle = document.getElementById("brandTitle");
   const brandSub = document.getElementById("brandSub");
 
-  homeBtn.style.display = section === "home" ? "none" : "flex";
-  headerBtn.style.display = section === "home" ? "none" : "flex";
+  const loggedIn = !!state.currentUser;
+  homeBtn.style.display = loggedIn && section !== "home" ? "flex" : "none";
+  logoutBtn.style.display = loggedIn ? "flex" : "none";
+  userBadge.style.display = loggedIn ? "inline" : "none";
+  userBadge.textContent = loggedIn ? state.currentUser.displayName : "";
+  headerBtn.style.display = loggedIn && ["inventory", "directory", "reservation"].includes(section) ? "flex" : "none";
 
   if (section === "inventory") {
     brandTitle.textContent = "INVENTAIRE VÉHICULES";
@@ -470,6 +505,12 @@ function updateHeader() {
   } else if (section === "directory") {
     brandTitle.textContent = "ANNUAIRE DU PERSONNEL";
     brandSub.textContent = "CSP · CONTACTS";
+  } else if (section === "reservation") {
+    brandTitle.textContent = "RÉSERVATION VÉHICULES";
+    brandSub.textContent = "CSP · PLANNING";
+  } else if (section === "users") {
+    brandTitle.textContent = "UTILISATEURS";
+    brandSub.textContent = "CSP · COMPTES & DROITS";
   } else {
     brandTitle.textContent = "CSP PRIVAS";
     brandSub.textContent = "MENU PRINCIPAL";
@@ -478,6 +519,33 @@ function updateHeader() {
 
 document.getElementById("homeBtn").addEventListener("click", () => goto("home"));
 
+document.getElementById("logoutBtn").addEventListener("click", () => {
+  if (!confirm("Se déconnecter ?")) return;
+  clearSession();
+  state.currentUser = null;
+  state.currentPassword = "";
+  state.config = null;
+  state.history = [];
+  state.personnel = null;
+  state.reservations = null;
+  state.reservationVehicles = null;
+  state.users = null;
+  configDraft = null;
+  configDirty = false;
+  configCollapsed = null;
+  personnelDraft = null;
+  personnelDirty = false;
+  reservationVehiclesDraft = null;
+  reservationVehiclesDirty = false;
+  usersDraft = null;
+  usersDirty = false;
+  formDraft = { checkedBy: "", results: {}, notes: "", step: 0, touched: false, saving: false };
+  reservationDraft = { personName: "", startDate: "", startTime: "", endDate: "", endTime: "", motif: "", touched: false, saving: false };
+  state._formVehicleId = null;
+  state._resaVehicleId = null;
+  goto("login");
+});
+
 document.getElementById("headerBtn").addEventListener("click", async () => {
   const section = sectionOf(state.view);
   if (section === "inventory") {
@@ -485,16 +553,14 @@ document.getElementById("headerBtn").addEventListener("click", async () => {
       goto("dashboard");
       return;
     }
-    const ok = await requireAdmin();
-    if (ok) goto("config");
+    if (!requireAdminOrAlert()) return;
+    goto("config");
   } else if (section === "directory") {
     if (state.view === "directoryConfig") {
       goto("directory");
       return;
     }
-    const ok = await requireAdmin();
-    if (!ok) return;
-    state.directoryPin = state.adminPin;
+    if (!requireAdminOrAlert()) return;
     if (state.personnel === null) {
       state.loading = true;
       render();
@@ -502,6 +568,19 @@ document.getElementById("headerBtn").addEventListener("click", async () => {
       state.loading = false;
     }
     goto("directoryConfig");
+  } else if (section === "reservation") {
+    if (state.view === "reservationManage") {
+      goto("reservation");
+      return;
+    }
+    if (!requireAdminOrAlert()) return;
+    if (state.reservations === null || state.reservationVehicles === null) {
+      state.loading = true;
+      render();
+      await ensureReservationsLoaded();
+      state.loading = false;
+    }
+    goto("reservationManage");
   }
 });
 
@@ -534,8 +613,28 @@ function render() {
     html += `<div class="err-banner">⚠ ${state.error}</div>`;
   }
 
+  if (state.view === "login") {
+    html += renderLogin();
+    app.innerHTML = html;
+    attachHandlers();
+    attachLoginHandlers();
+    return;
+  }
+
+  if (!state.currentUser) {
+    goto("login");
+    return;
+  }
+
   if (state.view === "home") {
     html += renderHome();
+    app.innerHTML = html;
+    attachHandlers();
+    return;
+  }
+
+  if (state.view === "usersManage") {
+    html += renderUsersManage();
     app.innerHTML = html;
     attachHandlers();
     return;
@@ -555,15 +654,99 @@ function render() {
   else if (state.view === "directory") html += renderDirectoryList();
   else if (state.view === "directoryConfig") html += renderDirectoryConfig();
   else if (state.view === "recap") html += renderRecap();
+  else if (state.view === "reservation") html += renderReservationHome();
+  else if (state.view === "reservationVehicle") html += renderReservationVehicle();
+  else if (state.view === "reservationManage") html += renderReservationManage();
 
   app.innerHTML = html;
   attachHandlers();
 }
 
 // ---------------------------------------------------------------------
+// Connexion
+// ---------------------------------------------------------------------
+let loginDraft = { username: "", password: "", touched: false, submitting: false, error: "" };
+
+function renderLogin() {
+  const d = loginDraft;
+  return `
+    <div style="max-width:340px; margin:40px auto 0;">
+      <h2 class="page-title" style="font-size:26px; text-align:center;">Connexion</h2>
+      <p class="page-subtitle" style="text-align:center;">CSP Privas</p>
+
+      <label class="field-label">Identifiant</label>
+      <input class="field" id="loginUsername" placeholder="prenom.nom" value="${escapeHtml(d.username)}" autocapitalize="none" autocomplete="username" />
+
+      <label class="field-label">Mot de passe</label>
+      <input class="field" id="loginPassword" type="password" autocomplete="current-password" value="${escapeHtml(d.password)}" />
+
+      ${d.touched && d.error ? `<p class="field-err">${escapeHtml(d.error)}</p>` : ""}
+
+      <button class="btn-primary" id="loginSubmitBtn" style="width:100%; justify-content:center; margin-top:16px;" ${d.submitting ? "disabled" : ""}>
+        ${d.submitting ? "Connexion…" : "Se connecter"}
+      </button>
+    </div>`;
+}
+
+function attachLoginHandlers() {
+  const userEl = document.getElementById("loginUsername");
+  const passEl = document.getElementById("loginPassword");
+  if (userEl) userEl.addEventListener("input", (e) => { loginDraft.username = e.target.value; });
+  if (passEl) passEl.addEventListener("input", (e) => { loginDraft.password = e.target.value; });
+
+  const submit = async () => {
+    const d = loginDraft;
+    d.touched = true;
+    if (!d.username.trim() || !d.password) {
+      d.error = "Renseigne ton identifiant et ton mot de passe.";
+      render();
+      attachLoginHandlers();
+      return;
+    }
+    d.submitting = true;
+    render();
+    attachLoginHandlers();
+    try {
+      const user = await attemptLogin(d.username.trim(), d.password);
+      if (!user) {
+        d.error = "Identifiant ou mot de passe incorrect.";
+        d.submitting = false;
+        render();
+        attachLoginHandlers();
+        return;
+      }
+      state.currentUser = user;
+      state.currentPassword = d.password;
+      saveSession(d.username.trim(), d.password);
+      loginDraft = { username: "", password: "", touched: false, submitting: false, error: "" };
+      goto("home");
+      await loadAll();
+    } catch (e) {
+      d.error = "Connexion impossible pour le moment : " + e.message;
+      d.submitting = false;
+      render();
+      attachLoginHandlers();
+    }
+  };
+
+  const btn = document.getElementById("loginSubmitBtn");
+  if (btn) btn.addEventListener("click", submit);
+  if (passEl) passEl.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+}
+
+// ---------------------------------------------------------------------
 // Home menu
 // ---------------------------------------------------------------------
 function renderHome() {
+  const usersCard = isAdminUser()
+    ? `<button class="menu-card" data-action="goUsers">
+        <span class="menu-card-icon">👤</span>
+        <span class="menu-card-text">
+          <span class="menu-card-label">Utilisateurs</span>
+          <span class="menu-card-sub">Comptes et droits d'accès</span>
+        </span>
+      </button>`
+    : "";
   return `
     <div style="display:flex; flex-direction:column; gap:16px; margin-top:4px;">
       <button class="menu-card" data-action="goDashboard">
@@ -580,6 +763,58 @@ function renderHome() {
           <span class="menu-card-sub">Coordonnées des membres du centre</span>
         </span>
       </button>
+      <button class="menu-card" data-action="goReservation">
+        <span class="menu-card-icon">📅</span>
+        <span class="menu-card-text">
+          <span class="menu-card-label">Réservation véhicules</span>
+          <span class="menu-card-sub">Planning de disponibilité et réservations</span>
+        </span>
+      </button>
+      ${usersCard}
+    </div>`;
+}
+
+// ---------------------------------------------------------------------
+// Utilisateurs (admin uniquement)
+// ---------------------------------------------------------------------
+let usersDraft = null;
+let usersDirty = false;
+
+function renderUsersManage() {
+  if (!usersDraft) usersDraft = JSON.parse(JSON.stringify(state.users || []));
+
+  const rows = usersDraft
+    .map(
+      (u) => `<div class="config-card">
+        <div class="config-card-head">
+          <input class="input-inline-small" data-role="userDisplayName" data-user="${u.id}" value="${escapeHtml(u.displayName || "")}" placeholder="Nom affiché (ex: Antoine Grevillot)" />
+          <button class="danger-btn" data-action="removeUser" data-user="${u.id}">🗑</button>
+        </div>
+        <div class="config-item-row">
+          <input class="input-inline-small" data-role="userUsername" data-user="${u.id}" value="${escapeHtml(u.username || "")}" placeholder="identifiant (prenom.nom)" />
+          <input class="input-inline-small" data-role="userNewPassword" data-user="${u.id}" type="password" placeholder="Nouveau mot de passe (laisser vide = inchangé)" />
+        </div>
+        <div style="display:flex; gap:16px; margin-top:10px; flex-wrap:wrap;">
+          <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#5B6770;">
+            <input type="checkbox" data-role="userIsAdmin" data-user="${u.id}" ${u.isAdmin ? "checked" : ""} /> Administrateur
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#5B6770;">
+            <input type="checkbox" data-role="userCanViewDirectory" data-user="${u.id}" ${u.canViewDirectory ? "checked" : ""} /> Accès annuaire
+          </label>
+        </div>
+      </div>`
+    )
+    .join("");
+
+  return `
+    <button class="back-link" data-action="home">← Menu principal</button>
+    <h2 class="page-title">Utilisateurs</h2>
+    <p class="page-subtitle">Comptes et droits d'accès. Un administrateur a automatiquement accès à l'annuaire.</p>
+    ${rows}
+    <button class="add-vehicle-btn" data-action="addUser">+ Ajouter un utilisateur</button>
+    <div class="config-actions">
+      <button class="btn-secondary" data-action="home">Retour</button>
+      <button class="btn-primary" id="saveUsersBtn" ${usersDirty ? "" : "disabled"}>Enregistrer les modifications</button>
     </div>`;
 }
 
@@ -740,19 +975,19 @@ function renderHistoryDetail() {
     <p class="meta-line">Vérifié par <strong>${escapeHtml(entry.checkedBy)}</strong> le ${formatDate(entry.timestamp)}</p>
     ${entry.notes ? `<p class="notes-box">« ${escapeHtml(entry.notes)} »</p>` : ""}
     <ul class="item-list">${rows}</ul>
-    ${state.isAdmin ? `<button class="btn-secondary" data-action="deleteEntry" data-entry="${entry.id}" data-vehicle="${v.id}" style="color:#C8372E; border-color:#C8372E;">Supprimer cette entrée</button>` : ""}`;
+    ${isAdminUser() ? `<button class="btn-secondary" data-action="deleteEntry" data-entry="${entry.id}" data-vehicle="${v.id}" style="color:#C8372E; border-color:#C8372E;">Supprimer cette entrée</button>` : ""}`;
 }
 
 // ---------------------------------------------------------------------
 // Form
 // ---------------------------------------------------------------------
-let formDraft = { checkedBy: "", results: {}, notes: "", step: 0, touched: false, saving: false };
+let formDraft = { checkedBy: (state.currentUser && state.currentUser.displayName) || "", results: {}, notes: "", step: 0, touched: false, saving: false };
 
 function renderForm() {
   const v = state.config.vehicles.find((x) => x.id === state.selectedVehicleId);
   if (!v) return "";
   if (state._formVehicleId !== v.id) {
-    formDraft = { checkedBy: "", results: {}, notes: "", step: 0, touched: false, saving: false };
+    formDraft = { checkedBy: (state.currentUser && state.currentUser.displayName) || "", results: {}, notes: "", step: 0, touched: false, saving: false };
     state._formVehicleId = v.id;
   }
 
@@ -904,9 +1139,168 @@ function renderDirectoryConfig() {
 }
 
 // ---------------------------------------------------------------------
-// Config
+// Réservation véhicules
 // ---------------------------------------------------------------------
-let configDraft = null;
+function reservationsFor(vehicleId) {
+  return (state.reservations || [])
+    .filter((r) => r.vehicleId === vehicleId)
+    .slice()
+    .sort((a, b) => new Date(a.start) - new Date(b.start));
+}
+
+function nextReservation(vehicleId) {
+  const now = Date.now();
+  return reservationsFor(vehicleId).find((r) => new Date(r.end).getTime() >= now) || null;
+}
+
+function formatResaDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function renderReservationHome() {
+  const vehicles = state.reservationVehicles || [];
+  if (!vehicles.length) {
+    return `<div class="empty-box"><p class="muted">Aucun véhicule réservable pour l'instant. Un administrateur peut en ajouter via ⚙️.</p></div>`;
+  }
+  const cards = vehicles
+    .map((v) => {
+      const next = nextReservation(v.id);
+      const flagColor = next ? "#E8A33D" : "#3A7D5C";
+      const flagLabel = next ? "RÉSERVÉ" : "DISPONIBLE";
+      return `
+        <button class="card" data-action="reservationVehicle" data-vehicle="${v.id}">
+          <div class="card-flag" style="background:${flagColor}">${flagLabel}</div>
+          <div class="card-body">
+            <h2 class="card-title">${escapeHtml(v.name)}</h2>
+            <p class="card-type">${escapeHtml(v.type || "")}</p>
+            <p class="card-meta">${next ? `Prochaine résa : ${escapeHtml(next.personName)} · ${formatResaDate(next.start)}` : "Aucune réservation à venir"}</p>
+          </div>
+        </button>`;
+    })
+    .join("");
+  return `<div class="grid">${cards}</div>`;
+}
+
+let reservationDraft = { personName: "", startDate: "", startTime: "", endDate: "", endTime: "", motif: "", touched: false, saving: false };
+
+function renderReservationVehicle() {
+  const v = (state.reservationVehicles || []).find((x) => x.id === state.selectedVehicleId);
+  if (!v) return "";
+  if (state._resaVehicleId !== v.id) {
+    reservationDraft = { personName: (state.currentUser && state.currentUser.displayName) || "", startDate: "", startTime: "", endDate: "", endTime: "", motif: "", touched: false, saving: false };
+    state._resaVehicleId = v.id;
+  }
+
+  const now = Date.now();
+  const list = reservationsFor(v.id);
+  const rows = list
+    .map((r) => {
+      const isPast = new Date(r.end).getTime() < now;
+      return `<div class="resa-row ${isPast ? "past" : ""}">
+        <div>
+          <div class="resa-person">${escapeHtml(r.personName)}</div>
+          <div class="resa-dates">${formatResaDate(r.start)} → ${formatResaDate(r.end)}</div>
+          ${r.motif ? `<div class="resa-motif">${escapeHtml(r.motif)}</div>` : ""}
+        </div>
+        <button class="danger-btn" data-action="deleteReservation" data-entry="${r.id}">🗑</button>
+      </div>`;
+    })
+    .join("");
+
+  const listBlock = list.length
+    ? `<div style="margin:10px 0 24px;">${rows}</div>`
+    : `<div class="empty-box"><p class="muted">Aucune réservation pour ce véhicule.</p></div>`;
+
+  const d = reservationDraft;
+  const validRange = d.startDate && d.startTime && d.endDate && d.endTime
+    ? new Date(`${d.endDate}T${d.endTime}`) > new Date(`${d.startDate}T${d.startTime}`)
+    : false;
+
+  return `
+    <button class="back-link" data-action="reservation">← Réservation véhicules</button>
+    <h2 class="page-title">${escapeHtml(v.name)}</h2>
+    <p class="page-subtitle">${escapeHtml(v.type || "")}</p>
+
+    ${listBlock}
+
+    <p style="font-family:'Barlow Condensed',sans-serif; font-weight:800; font-size:18px; margin:20px 0 10px; border-bottom:2px solid #C8372E; padding-bottom:6px;">Réserver ce véhicule</p>
+
+    <label class="field-label">Nom</label>
+    <input class="field" id="resaNameInput" placeholder="Ton nom" value="${escapeHtml(d.personName)}" />
+    ${d.touched && !d.personName.trim() ? `<p class="field-err">Indique ton nom.</p>` : ""}
+
+    <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
+      <div style="flex:1; min-width:140px;">
+        <label class="field-label" style="margin-top:0;">Départ</label>
+        <input class="field" type="date" id="resaStartDate" value="${d.startDate}" />
+        <input class="field" type="time" id="resaStartTime" value="${d.startTime}" style="margin-top:6px;" />
+      </div>
+      <div style="flex:1; min-width:140px;">
+        <label class="field-label" style="margin-top:0;">Retour</label>
+        <input class="field" type="date" id="resaEndDate" value="${d.endDate}" />
+        <input class="field" type="time" id="resaEndTime" value="${d.endTime}" style="margin-top:6px;" />
+      </div>
+    </div>
+    ${d.touched && (!d.startDate || !d.startTime || !d.endDate || !d.endTime) ? `<p class="field-err">Renseigne les dates et heures de départ et de retour.</p>` : ""}
+    ${d.touched && d.startDate && d.startTime && d.endDate && d.endTime && !validRange ? `<p class="field-err">La date/heure de retour doit être après le départ.</p>` : ""}
+
+    <label class="field-label">Motif (optionnel)</label>
+    <input class="field" id="resaMotifInput" placeholder="Intervention, formation, entretien…" value="${escapeHtml(d.motif)}" />
+
+    <button class="btn-primary" id="resaSubmitBtn" ${d.saving ? "disabled" : ""}>${d.saving ? "Enregistrement…" : "Réserver"}</button>`;
+}
+
+let reservationVehiclesDraft = null;
+let reservationVehiclesDirty = false;
+
+function renderReservationManage() {
+  if (!reservationVehiclesDraft) reservationVehiclesDraft = JSON.parse(JSON.stringify(state.reservationVehicles || []));
+
+  const vehicleRows = reservationVehiclesDraft
+    .map(
+      (v) => `<div class="config-item-row">
+        <input class="input-inline-small" data-role="resaVehicleName" data-vehicle="${v.id}" value="${escapeHtml(v.name)}" placeholder="Nom du véhicule" />
+        <input class="input-inline-small" data-role="resaVehicleType" data-vehicle="${v.id}" value="${escapeHtml(v.type || "")}" placeholder="Type (optionnel)" />
+        <button class="danger-btn" data-action="removeReservationVehicle" data-vehicle="${v.id}">✕</button>
+      </div>`
+    )
+    .join("");
+
+  const all = (state.reservations || [])
+    .slice()
+    .sort((a, b) => new Date(a.start) - new Date(b.start));
+  const vehicleName = (id) => {
+    const v = (state.reservationVehicles || []).find((x) => x.id === id);
+    return v ? v.name : "(véhicule supprimé)";
+  };
+  const resaRows = all
+    .map(
+      (r) => `<div class="resa-row">
+        <div>
+          <div class="resa-vehicle-tag">${escapeHtml(vehicleName(r.vehicleId))}</div>
+          <div class="resa-person">${escapeHtml(r.personName)}</div>
+          <div class="resa-dates">${formatResaDate(r.start)} → ${formatResaDate(r.end)}</div>
+          ${r.motif ? `<div class="resa-motif">${escapeHtml(r.motif)}</div>` : ""}
+        </div>
+        <button class="danger-btn" data-action="deleteReservation" data-entry="${r.id}">🗑</button>
+      </div>`
+    )
+    .join("");
+
+  return `
+    <h2 class="page-title">Réservations — gestion</h2>
+    <p class="page-subtitle">Véhicules réservables et suivi des réservations</p>
+
+    <p style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#5B6770; margin:12px 0 6px;">Véhicules réservables</p>
+    ${vehicleRows || `<p class="muted" style="font-size:13px;">Aucun véhicule pour l'instant.</p>`}
+    <button class="add-item-btn" data-action="addReservationVehicle">+ Ajouter un véhicule</button>
+    <button class="btn-primary" id="saveResaVehiclesBtn" style="margin-top:14px; margin-bottom:24px;" ${reservationVehiclesDirty ? "" : "disabled"}>Enregistrer les véhicules</button>
+
+    <p style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#5B6770; margin:12px 0 6px;">Toutes les réservations</p>
+    ${all.length ? resaRows : `<p class="muted" style="font-size:13px;">Aucune réservation enregistrée.</p>`}`;
+}
 let configDirty = false;
 let configCollapsed = null;
 
@@ -1015,21 +1409,10 @@ function attachHandlers() {
       const entryId = el.dataset.entry;
       const contactId = el.dataset.contact;
 
-      if (action === "goDashboard") goto("dashboard");
-      else if (action === "goDirectory") {
-        const ok = await requireDirectoryView();
-        if (!ok) return;
-        if (state.personnel === null) {
-          state.loading = true;
-          render();
-          await ensurePersonnelLoaded();
-          state.loading = false;
-        }
-        goto("directory");
-      }
-      else if (action === "directory") {
-        const ok = await requireDirectoryView();
-        if (!ok) return;
+      if (action === "home") goto("home");
+      else if (action === "goDashboard") goto("dashboard");
+      else if (action === "goDirectory" || action === "directory") {
+        if (!requireDirectoryOrAlert()) return;
         if (state.personnel === null) {
           state.loading = true;
           render();
@@ -1048,17 +1431,67 @@ function attachHandlers() {
         personnelDirty = true;
         render();
       }
+      else if (action === "goReservation" || action === "reservation") {
+        if (state.reservations === null || state.reservationVehicles === null) {
+          state.loading = true;
+          render();
+          await ensureReservationsLoaded();
+          state.loading = false;
+        }
+        goto("reservation");
+      }
+      else if (action === "reservationVehicle") {
+        goto("reservationVehicle", vehicleId);
+      }
+      else if (action === "deleteReservation") {
+        if (!requireAdminOrAlert()) return;
+        if (confirm("Supprimer définitivement cette réservation ?")) {
+          try {
+            await deleteReservationRemote(entryId);
+            render();
+          } catch (err) {
+            state.error = "La suppression a échoué : " + err.message;
+            render();
+          }
+        }
+      }
+      else if (action === "addReservationVehicle") {
+        reservationVehiclesDraft.push({ id: uid(), name: "Nouveau véhicule", type: "" });
+        reservationVehiclesDirty = true;
+        render();
+      }
+      else if (action === "removeReservationVehicle") {
+        reservationVehiclesDraft = reservationVehiclesDraft.filter((v) => v.id !== vehicleId);
+        reservationVehiclesDirty = true;
+        render();
+      }
+      else if (action === "goUsers") {
+        if (!requireAdminOrAlert()) return;
+        state.loading = true;
+        render();
+        await ensureUsersLoaded();
+        state.loading = false;
+        goto("usersManage");
+      }
+      else if (action === "addUser") {
+        usersDraft.push({ id: uid(), username: "", displayName: "", isAdmin: false, canViewDirectory: false });
+        usersDirty = true;
+        render();
+      }
+      else if (action === "removeUser") {
+        usersDraft = usersDraft.filter((u) => u.id !== el.dataset.user);
+        usersDirty = true;
+        render();
+      }
       else if (action === "dashboard") goto("dashboard");
       else if (action === "detail") goto("detail", vehicleId);
       else if (action === "form") goto("form", vehicleId);
       else if (action === "config") { configDraft = null; configDirty = false; goto("config"); }
       else if (action === "historyList") {
-        const ok = await requireAdmin();
-        if (ok) goto("historyList", vehicleId);
+        if (requireAdminOrAlert()) goto("historyList", vehicleId);
       }
       else if (action === "historyDetail") {
-        const ok = await requireAdmin();
-        if (ok) goto("historyDetail", vehicleId, entryId);
+        if (requireAdminOrAlert()) goto("historyDetail", vehicleId, entryId);
       }
       else if (action === "deleteEntry") {
         if (confirm("Supprimer définitivement cette entrée de l'historique ?")) {
@@ -1349,12 +1782,186 @@ function attachHandlers() {
       }
     });
   }
+
+  const resaFieldMap = [
+    ["resaNameInput", "personName"],
+    ["resaStartDate", "startDate"],
+    ["resaStartTime", "startTime"],
+    ["resaEndDate", "endDate"],
+    ["resaEndTime", "endTime"],
+    ["resaMotifInput", "motif"],
+  ];
+  resaFieldMap.forEach(([id, field]) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("input", (e) => { reservationDraft[field] = e.target.value; });
+  });
+
+  const resaSubmitBtn = document.getElementById("resaSubmitBtn");
+  if (resaSubmitBtn) {
+    resaSubmitBtn.addEventListener("click", async () => {
+      const v = (state.reservationVehicles || []).find((x) => x.id === state.selectedVehicleId);
+      const d = reservationDraft;
+      d.touched = true;
+      const allFilled = d.personName.trim() && d.startDate && d.startTime && d.endDate && d.endTime;
+      const validRange = allFilled && new Date(`${d.endDate}T${d.endTime}`) > new Date(`${d.startDate}T${d.startTime}`);
+      if (!allFilled || !validRange) { render(); return; }
+
+      d.saving = true;
+      render();
+      try {
+        await addReservationRemote({
+          vehicleId: v.id,
+          personName: d.personName.trim(),
+          start: `${d.startDate}T${d.startTime}`,
+          end: `${d.endDate}T${d.endTime}`,
+          motif: d.motif.trim(),
+        });
+        reservationDraft = { personName: (state.currentUser && state.currentUser.displayName) || "", startDate: "", startTime: "", endDate: "", endTime: "", motif: "", touched: false, saving: false };
+        render();
+      } catch (e) {
+        state.error = "La réservation a échoué : " + e.message;
+        d.saving = false;
+        render();
+      }
+    });
+  }
+
+  app.querySelectorAll('[data-role="resaVehicleName"]').forEach((el) =>
+    el.addEventListener("input", (e) => {
+      const v = reservationVehiclesDraft.find((v) => v.id === el.dataset.vehicle);
+      if (v) v.name = e.target.value;
+      reservationVehiclesDirty = true;
+    })
+  );
+  app.querySelectorAll('[data-role="resaVehicleType"]').forEach((el) =>
+    el.addEventListener("input", (e) => {
+      const v = reservationVehiclesDraft.find((v) => v.id === el.dataset.vehicle);
+      if (v) v.type = e.target.value;
+      reservationVehiclesDirty = true;
+    })
+  );
+
+  const saveResaVehiclesBtn = document.getElementById("saveResaVehiclesBtn");
+  if (saveResaVehiclesBtn) {
+    saveResaVehiclesBtn.addEventListener("click", async () => {
+      saveResaVehiclesBtn.disabled = true;
+      saveResaVehiclesBtn.textContent = "Enregistrement…";
+      try {
+        await saveReservationVehiclesRemote(reservationVehiclesDraft);
+        reservationVehiclesDirty = false;
+        render();
+      } catch (e) {
+        state.error = "Échec de l'enregistrement des véhicules : " + e.message;
+        saveResaVehiclesBtn.disabled = false;
+        saveResaVehiclesBtn.textContent = "Enregistrer les véhicules";
+        render();
+      }
+    });
+  }
+
+  const userFieldMap = [
+    ["userDisplayName", "displayName"],
+    ["userUsername", "username"],
+    ["userNewPassword", "newPassword"],
+  ];
+  userFieldMap.forEach(([role, field]) => {
+    app.querySelectorAll(`[data-role="${role}"]`).forEach((el) =>
+      el.addEventListener("input", (e) => {
+        const u = usersDraft.find((u) => u.id === el.dataset.user);
+        if (u) u[field] = e.target.value;
+        usersDirty = true;
+      })
+    );
+  });
+  app.querySelectorAll('[data-role="userIsAdmin"]').forEach((el) =>
+    el.addEventListener("change", (e) => {
+      const u = usersDraft.find((u) => u.id === el.dataset.user);
+      if (u) u.isAdmin = e.target.checked;
+      usersDirty = true;
+    })
+  );
+  app.querySelectorAll('[data-role="userCanViewDirectory"]').forEach((el) =>
+    el.addEventListener("change", (e) => {
+      const u = usersDraft.find((u) => u.id === el.dataset.user);
+      if (u) u.canViewDirectory = e.target.checked;
+      usersDirty = true;
+    })
+  );
+
+  const saveUsersBtn = document.getElementById("saveUsersBtn");
+  if (saveUsersBtn) {
+    saveUsersBtn.addEventListener("click", async () => {
+      const missing = usersDraft.filter((u) => !u.username || !u.username.trim());
+      if (missing.length) {
+        state.error = "Chaque utilisateur doit avoir un identifiant.";
+        render();
+        return;
+      }
+      saveUsersBtn.disabled = true;
+      saveUsersBtn.textContent = "Enregistrement…";
+      try {
+        await saveUsersRemote(usersDraft);
+        usersDirty = false;
+        // Si l'utilisateur connecté a modifié son propre compte (nom, identifiant, mot de passe, droits),
+        // on resynchronise sa session pour rester cohérent.
+        const me = usersDraft.find((u) => u.id === state.currentUser.id);
+        if (me) {
+          if (me.newPassword) {
+            state.currentPassword = me.newPassword;
+          }
+          state.currentUser = {
+            id: me.id,
+            username: me.username,
+            displayName: me.displayName,
+            isAdmin: !!me.isAdmin,
+            canViewDirectory: !!me.canViewDirectory,
+          };
+          saveSession(me.username, state.currentPassword);
+        }
+        usersDraft = null;
+        render();
+      } catch (e) {
+        state.error = "Échec de l'enregistrement des utilisateurs : " + e.message;
+        saveUsersBtn.disabled = false;
+        saveUsersBtn.textContent = "Enregistrer les modifications";
+        render();
+      }
+    });
+  }
 }
 
 // ---------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------
-loadAll();
+async function boot() {
+  const session = readSession();
+  if (!session || !session.username || !session.password) {
+    render();
+    attachLoginHandlers();
+    return;
+  }
+  state.loading = true;
+  render();
+  try {
+    const user = await attemptLogin(session.username, session.password);
+    if (user) {
+      state.currentUser = user;
+      state.currentPassword = session.password;
+      state.loading = false;
+      goto("home");
+      await loadAll();
+      return;
+    }
+  } catch (e) {
+    // pas de connexion possible pour l'instant, on retombe sur l'écran de connexion
+  }
+  clearSession();
+  state.loading = false;
+  render();
+  attachLoginHandlers();
+}
+
+boot();
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
