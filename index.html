@@ -139,7 +139,7 @@
 // CONFIGURATION — colle ici l'URL de ton Google Apps Script Web App
 // (voir GUIDE-COMPLET.md)
 // =====================================================================
-const API_URL = "https://script.google.com/macros/s/AKfycbyw2Yv-CDgm1woPJwbFUzSNhYIXmhpQXZtQ9ys024IqlzwHsLf1PqkpG7DjLuNhfY8TpA/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycbwd4EWgiQP9TP7uk5IN0z0F8Is-t8G-Rmhc7SPWE46sKl3XB116Lqp5TuQwtCdk5mVyWA/exec";
 
 // ---------------------------------------------------------------------
 // State
@@ -147,7 +147,7 @@ const API_URL = "https://script.google.com/macros/s/AKfycbyw2Yv-CDgm1woPJwbFUzSN
 let state = {
   config: null,
   history: [],
-  view: "login", // login | home | dashboard | detail | form | config | historyList | historyDetail | directory | directoryConfig | recap | reservation | reservationVehicle | reservationManage | usersManage
+  view: "login", // login | setup | home | dashboard | detail | form | config | historyList | historyDetail | directory | directoryConfig | recap | reservation | reservationVehicle | reservationManage | usersManage
   selectedVehicleId: null,
   selectedEntryId: null,
   loading: false,
@@ -388,8 +388,9 @@ async function saveReservationVehiclesRemote(vehicles) {
 }
 
 async function addReservationRemote(reservation) {
-  const res = await apiPost("addReservation", { reservation });
-  state.reservations.push({ ...reservation, id: res.id });
+  const withCreator = { ...reservation, createdBy: state.currentUser ? state.currentUser.username : "" };
+  const res = await apiPost("addReservation", { reservation: withCreator });
+  state.reservations.push({ ...withCreator, id: res.id });
 }
 
 async function deleteReservationRemote(id) {
@@ -632,6 +633,14 @@ function render() {
     return;
   }
 
+  if (state.view === "setup") {
+    html += renderSetup();
+    app.innerHTML = html;
+    attachHandlers();
+    attachSetupHandlers();
+    return;
+  }
+
   if (!state.currentUser) {
     goto("login");
     return;
@@ -690,6 +699,7 @@ function renderLogin() {
 
       <label class="field-label">Mot de passe</label>
       <input class="field" id="loginPassword" type="password" autocomplete="current-password" value="${escapeHtml(d.password)}" />
+      <p class="muted" style="font-size:11px; margin-top:4px;">Une fois configuré, ton code à 4 chiffres fonctionne aussi ici.</p>
 
       ${d.touched && d.error ? `<p class="field-err">${escapeHtml(d.error)}</p>` : ""}
 
@@ -726,10 +736,21 @@ function attachLoginHandlers() {
         attachLoginHandlers();
         return;
       }
-      state.currentUser = user;
-      state.currentPassword = d.password;
-      saveSession(d.username.trim(), d.password);
+      const usedUsername = d.username.trim();
+      const usedSecret = d.password;
       loginDraft = { username: "", password: "", touched: false, submitting: false, error: "" };
+
+      if (user.mustChangePassword) {
+        state._setupUsername = usedUsername;
+        state._setupOldSecret = usedSecret;
+        state._setupUser = user;
+        goto("setup");
+        return;
+      }
+
+      state.currentUser = user;
+      state.currentPassword = usedSecret;
+      saveSession(usedUsername, usedSecret);
       goto("home");
       await loadAll();
     } catch (e) {
@@ -743,6 +764,99 @@ function attachLoginHandlers() {
   const btn = document.getElementById("loginSubmitBtn");
   if (btn) btn.addEventListener("click", submit);
   if (passEl) passEl.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+}
+
+// ---------------------------------------------------------------------
+// Première connexion : nouveau mot de passe + code à 4 chiffres
+// ---------------------------------------------------------------------
+let setupDraft = { newPin: "", confirmPin: "", touched: false, submitting: false, error: "" };
+
+function renderSetup() {
+  const d = setupDraft;
+  const name = (state._setupUser && state._setupUser.displayName) || "";
+  return `
+    <div style="max-width:340px; margin:30px auto 0;">
+      <h2 class="page-title" style="font-size:24px; text-align:center;">Première connexion</h2>
+      <p class="page-subtitle" style="text-align:center;">${escapeHtml(name)} — choisis un code à 4 chiffres</p>
+
+      <label class="field-label">Code à 4 chiffres</label>
+      <input class="field" id="setupNewPin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4"
+        style="letter-spacing:0.3em; text-align:center; font-family:'JetBrains Mono',monospace; font-size:20px;" value="${escapeHtml(d.newPin)}" />
+
+      <label class="field-label">Confirmer le code</label>
+      <input class="field" id="setupConfirmPin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4"
+        style="letter-spacing:0.3em; text-align:center; font-family:'JetBrains Mono',monospace; font-size:20px;" value="${escapeHtml(d.confirmPin)}" />
+      <p class="muted" style="font-size:11px; margin-top:4px;">Choisis un code différent de 1807. Il te permettra de te reconnecter plus rapidement la prochaine fois.</p>
+
+      ${d.touched && d.error ? `<p class="field-err">${escapeHtml(d.error)}</p>` : ""}
+
+      <button class="btn-primary" id="setupSubmitBtn" style="width:100%; justify-content:center; margin-top:16px;" ${d.submitting ? "disabled" : ""}>
+        ${d.submitting ? "Enregistrement…" : "Valider"}
+      </button>
+    </div>`;
+}
+
+function attachSetupHandlers() {
+  const fields = [
+    ["setupNewPin", "newPin"],
+    ["setupConfirmPin", "confirmPin"],
+  ];
+  fields.forEach(([id, field]) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("input", (e) => { setupDraft[field] = e.target.value; });
+  });
+
+  const submit = async () => {
+    const d = setupDraft;
+    d.touched = true;
+
+    if (!/^\d{4}$/.test(d.newPin)) {
+      d.error = "Le code doit contenir exactement 4 chiffres.";
+      render();
+      attachSetupHandlers();
+      return;
+    }
+    if (d.newPin === "1807") {
+      d.error = "Choisis un code différent de 1807.";
+      render();
+      attachSetupHandlers();
+      return;
+    }
+    if (d.newPin !== d.confirmPin) {
+      d.error = "Les deux codes ne correspondent pas.";
+      render();
+      attachSetupHandlers();
+      return;
+    }
+
+    d.submitting = true;
+    render();
+    attachSetupHandlers();
+    try {
+      const data = await apiPost("completeSetup", {
+        username: state._setupUsername,
+        oldPassword: state._setupOldSecret,
+        newPin: d.newPin,
+      });
+      state.currentUser = data.user;
+      state.currentPassword = state._setupOldSecret; // le mot de passe ne change pas, seul le code est ajouté
+      saveSession(state._setupUsername, state._setupOldSecret);
+      state._setupUsername = null;
+      state._setupOldSecret = null;
+      state._setupUser = null;
+      setupDraft = { newPin: "", confirmPin: "", touched: false, submitting: false, error: "" };
+      goto("home");
+      await loadAll();
+    } catch (e) {
+      d.error = "Échec : " + e.message;
+      d.submitting = false;
+      render();
+      attachSetupHandlers();
+    }
+  };
+
+  const btn = document.getElementById("setupSubmitBtn");
+  if (btn) btn.addEventListener("click", submit);
 }
 
 // ---------------------------------------------------------------------
@@ -811,6 +925,9 @@ function renderUsersManage() {
           </label>
           <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#5B6770;">
             <input type="checkbox" data-role="userCanViewDirectory" data-user="${u.id}" ${u.canViewDirectory ? "checked" : ""} /> Accès annuaire
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#5B6770;">
+            <input type="checkbox" data-role="userMustChangePassword" data-user="${u.id}" ${u.mustChangePassword ? "checked" : ""} /> Forcer nouveau mot de passe + code
           </label>
         </div>
       </div>`
@@ -1160,6 +1277,20 @@ function reservationsFor(vehicleId) {
     .sort((a, b) => new Date(a.start) - new Date(b.start));
 }
 
+// Deux créneaux se chevauchent si l'un commence avant que l'autre finisse, dans les deux sens.
+function findOverlap(vehicleId, startISO, endISO, excludeId = null) {
+  const start = new Date(startISO).getTime();
+  const end = new Date(endISO).getTime();
+  return (
+    (state.reservations || []).find((r) => {
+      if (r.vehicleId !== vehicleId || r.id === excludeId) return false;
+      const rStart = new Date(r.start).getTime();
+      const rEnd = new Date(r.end).getTime();
+      return start < rEnd && end > rStart;
+    }) || null
+  );
+}
+
 function nextReservation(vehicleId) {
   const now = Date.now();
   return reservationsFor(vehicleId).find((r) => new Date(r.end).getTime() >= now) || null;
@@ -1210,13 +1341,14 @@ function renderReservationVehicle() {
   const rows = list
     .map((r) => {
       const isPast = new Date(r.end).getTime() < now;
+      const canDelete = isAdminUser() || (state.currentUser && r.createdBy === state.currentUser.username);
       return `<div class="resa-row ${isPast ? "past" : ""}">
         <div>
           <div class="resa-person">${escapeHtml(r.personName)}</div>
           <div class="resa-dates">${formatResaDate(r.start)} → ${formatResaDate(r.end)}</div>
           ${r.motif ? `<div class="resa-motif">${escapeHtml(r.motif)}</div>` : ""}
         </div>
-        <button class="danger-btn" data-action="deleteReservation" data-entry="${r.id}">🗑</button>
+        ${canDelete ? `<button class="danger-btn" data-action="deleteReservation" data-entry="${r.id}">🗑</button>` : ""}
       </div>`;
     })
     .join("");
@@ -1456,7 +1588,6 @@ function attachHandlers() {
         goto("reservationVehicle", vehicleId);
       }
       else if (action === "deleteReservation") {
-        if (!requireAdminOrAlert()) return;
         if (confirm("Supprimer définitivement cette réservation ?")) {
           try {
             await deleteReservationRemote(entryId);
@@ -1486,7 +1617,7 @@ function attachHandlers() {
         goto("usersManage");
       }
       else if (action === "addUser") {
-        usersDraft.push({ id: uid(), username: "", displayName: "", isAdmin: false, canViewDirectory: false });
+        usersDraft.push({ id: uid(), username: "", displayName: "", isAdmin: false, canViewDirectory: false, mustChangePassword: true });
         usersDirty = true;
         render();
       }
@@ -1521,6 +1652,7 @@ function attachHandlers() {
               isAdmin: false,
               canViewDirectory: false,
               newPassword: "1807",
+              mustChangePassword: true,
             });
             existingUsernames.add(username);
             created++;
@@ -1856,14 +1988,34 @@ function attachHandlers() {
       const validRange = allFilled && new Date(`${d.endDate}T${d.endTime}`) > new Date(`${d.startDate}T${d.startTime}`);
       if (!allFilled || !validRange) { render(); return; }
 
+      const startISO = `${d.startDate}T${d.startTime}`;
+      const endISO = `${d.endDate}T${d.endTime}`;
+
       d.saving = true;
       render();
+      try {
+        // Rafraîchit juste avant de vérifier, pour limiter le risque que deux
+        // personnes réservent le même créneau en même temps sans le savoir.
+        const fresh = await apiGet("getReservationData");
+        state.reservations = fresh.reservations || [];
+      } catch (e) {
+        // si le rafraîchissement échoue, on continue avec les données déjà en mémoire
+      }
+
+      const conflict = findOverlap(v.id, startISO, endISO);
+      if (conflict) {
+        state.error = `Véhicule déjà réservé par ${conflict.personName} du ${formatResaDate(conflict.start)} au ${formatResaDate(conflict.end)}. Choisis un autre créneau.`;
+        d.saving = false;
+        render();
+        return;
+      }
+
       try {
         await addReservationRemote({
           vehicleId: v.id,
           personName: d.personName.trim(),
-          start: `${d.startDate}T${d.startTime}`,
-          end: `${d.endDate}T${d.endTime}`,
+          start: startISO,
+          end: endISO,
           motif: d.motif.trim(),
         });
         reservationDraft = { personName: (state.currentUser && state.currentUser.displayName) || "", startDate: "", startTime: "", endDate: "", endTime: "", motif: "", touched: false, saving: false };
@@ -1937,6 +2089,13 @@ function attachHandlers() {
       usersDirty = true;
     })
   );
+  app.querySelectorAll('[data-role="userMustChangePassword"]').forEach((el) =>
+    el.addEventListener("change", (e) => {
+      const u = usersDraft.find((u) => u.id === el.dataset.user);
+      if (u) u.mustChangePassword = e.target.checked;
+      usersDirty = true;
+    })
+  );
 
   const saveUsersBtn = document.getElementById("saveUsersBtn");
   if (saveUsersBtn) {
@@ -1995,9 +2154,16 @@ async function boot() {
   try {
     const user = await attemptLogin(session.username, session.password);
     if (user) {
+      state.loading = false;
+      if (user.mustChangePassword) {
+        state._setupUsername = session.username;
+        state._setupOldSecret = session.password;
+        state._setupUser = user;
+        goto("setup");
+        return;
+      }
       state.currentUser = user;
       state.currentPassword = session.password;
-      state.loading = false;
       goto("home");
       await loadAll();
       return;
