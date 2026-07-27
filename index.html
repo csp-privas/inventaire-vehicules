@@ -1165,14 +1165,14 @@ function renderDirectoryConfig() {
   const rows = personnelDraft
     .map((c) => {
       const isAutre = (c.grade || "") === "Autre";
+      const expectedUsername =
+        c.username || `${normalizeUsernamePart(c.prenom || "")}.${normalizeUsernamePart(c.nom || "")}`;
+      const codeResetPending = c.newCode === "1807";
       const accountBlock = isAutre
         ? `<p class="muted" style="font-size:12px; margin-top:8px;">Grade « Autre » : pas de compte de connexion.</p>`
         : `
-      <div class="config-item-row" style="margin-top:8px;">
-        <input class="input-inline-small" data-role="contactUsername" data-contact="${c.id}" value="${escapeHtml(c.username || "")}" placeholder="identifiant (auto : prenom.nom)" />
-        <input class="input-inline-small" data-role="contactNewCode" data-contact="${c.id}" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="Nouveau code (vide = inchangé)" value="${escapeHtml(c.newCode || "")}" />
-      </div>
-      <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap; align-items:center;">
+      <p style="font-size:12px; color:#5B6770; margin-top:8px;">Identifiant : <strong style="color:#1C1F22; font-family:'JetBrains Mono',monospace;">${escapeHtml(expectedUsername)}</strong></p>
+      <div style="display:flex; gap:10px; margin-top:4px; flex-wrap:wrap; align-items:center;">
         <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#5B6770;">
           <input type="checkbox" data-role="contactIsAdmin" data-contact="${c.id}" ${c.isAdmin ? "checked" : ""} /> Administrateur
         </label>
@@ -1181,6 +1181,7 @@ function renderDirectoryConfig() {
         </label>
         <button class="btn-ghost" data-action="resetContactCode" data-contact="${c.id}">Remettre code par défaut (1807)</button>
       </div>
+      ${codeResetPending ? `<p class="field-err" style="margin-top:6px;">Code remis à 1807 — sera appliqué à l'enregistrement.</p>` : ""}
       <p class="muted" style="font-size:11px; margin-top:6px;">${c.userId ? "Compte existant — sera mis à jour à l'enregistrement." : "Nouveau compte créé automatiquement à l'enregistrement."}</p>`;
 
       return `
@@ -1850,8 +1851,6 @@ function attachHandlers() {
     ["contactTelephone", "telephone"],
     ["contactEmail", "email"],
     ["contactNotes", "notes"],
-    ["contactUsername", "username"],
-    ["contactNewCode", "newCode"],
   ];
   contactFields.forEach(([role, field]) => {
     app.querySelectorAll(`[data-role="${role}"]`).forEach((el) =>
