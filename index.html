@@ -491,7 +491,6 @@ function sectionOf(view) {
   if (view === "login" || view === "home") return view;
   if (["directory", "directoryConfig"].includes(view)) return "directory";
   if (["reservation", "reservationVehicle", "reservationManage"].includes(view)) return "reservation";
-  if (view === "usersManage") return "users";
   return "inventory";
 }
 
@@ -520,9 +519,6 @@ function updateHeader() {
   } else if (section === "reservation") {
     brandTitle.textContent = "RÉSERVATION VÉHICULES";
     brandSub.textContent = "CSP · PLANNING";
-  } else if (section === "users") {
-    brandTitle.textContent = "UTILISATEURS";
-    brandSub.textContent = "CSP · COMPTES & DROITS";
   } else {
     brandTitle.textContent = "CSP PRIVAS";
     brandSub.textContent = "MENU PRINCIPAL";
@@ -549,8 +545,6 @@ document.getElementById("logoutBtn").addEventListener("click", () => {
   personnelDirty = false;
   reservationVehiclesDraft = null;
   reservationVehiclesDirty = false;
-  usersDraft = null;
-  usersDirty = false;
   formDraft = { checkedBy: "", results: {}, notes: "", step: 0, touched: false, saving: false };
   reservationDraft = { personName: "", startDate: "", startTime: "", endDate: "", endTime: "", motif: "", touched: false, saving: false };
   state._formVehicleId = null;
@@ -573,10 +567,11 @@ document.getElementById("headerBtn").addEventListener("click", async () => {
       return;
     }
     if (!requireAdminOrAlert()) return;
-    if (state.personnel === null) {
+    if (state.personnel === null || state.users === null) {
       state.loading = true;
       render();
       await ensurePersonnelLoaded();
+      await ensureUsersLoaded();
       state.loading = false;
     }
     goto("directoryConfig");
@@ -648,13 +643,6 @@ function render() {
 
   if (state.view === "home") {
     html += renderHome();
-    app.innerHTML = html;
-    attachHandlers();
-    return;
-  }
-
-  if (state.view === "usersManage") {
-    html += renderUsersManage();
     app.innerHTML = html;
     attachHandlers();
     return;
@@ -863,15 +851,6 @@ function attachSetupHandlers() {
 // Home menu
 // ---------------------------------------------------------------------
 function renderHome() {
-  const usersCard = isAdminUser()
-    ? `<button class="menu-card" data-action="goUsers">
-        <span class="menu-card-icon">👤</span>
-        <span class="menu-card-text">
-          <span class="menu-card-label">Utilisateurs</span>
-          <span class="menu-card-sub">Comptes et droits d'accès</span>
-        </span>
-      </button>`
-    : "";
   return `
     <div style="display:flex; flex-direction:column; gap:16px; margin-top:4px;">
       <button class="menu-card" data-action="goDashboard">
@@ -885,7 +864,7 @@ function renderHome() {
         <span class="menu-card-icon">📇</span>
         <span class="menu-card-text">
           <span class="menu-card-label">Annuaire du personnel</span>
-          <span class="menu-card-sub">Coordonnées des membres du centre</span>
+          <span class="menu-card-sub">Coordonnées, comptes et droits d'accès</span>
         </span>
       </button>
       <button class="menu-card" data-action="goReservation">
@@ -895,53 +874,6 @@ function renderHome() {
           <span class="menu-card-sub">Planning de disponibilité et réservations</span>
         </span>
       </button>
-      ${usersCard}
-    </div>`;
-}
-
-// ---------------------------------------------------------------------
-// Utilisateurs (admin uniquement)
-// ---------------------------------------------------------------------
-let usersDraft = null;
-let usersDirty = false;
-
-function renderUsersManage() {
-  if (!usersDraft) usersDraft = JSON.parse(JSON.stringify(state.users || []));
-
-  const rows = usersDraft
-    .map(
-      (u) => `<div class="config-card">
-        <div class="config-card-head">
-          <input class="input-inline-small" data-role="userDisplayName" data-user="${u.id}" value="${escapeHtml(u.displayName || "")}" placeholder="Nom affiché (ex: Antoine Grevillot)" />
-          <button class="danger-btn" data-action="removeUser" data-user="${u.id}">🗑</button>
-        </div>
-        <div class="config-item-row">
-          <input class="input-inline-small" data-role="userUsername" data-user="${u.id}" value="${escapeHtml(u.username || "")}" placeholder="identifiant (prenom.nom)" />
-          <input class="input-inline-small" data-role="userNewCode" data-user="${u.id}" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="Nouveau code (laisser vide = inchangé)" value="${escapeHtml(u.newCode || "")}" />
-        </div>
-        <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; align-items:center;">
-          <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#5B6770;">
-            <input type="checkbox" data-role="userIsAdmin" data-user="${u.id}" ${u.isAdmin ? "checked" : ""} /> Administrateur
-          </label>
-          <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#5B6770;">
-            <input type="checkbox" data-role="userCanViewDirectory" data-user="${u.id}" ${u.canViewDirectory ? "checked" : ""} /> Accès annuaire
-          </label>
-          <button class="btn-ghost" data-action="resetUserCode" data-user="${u.id}">Remettre code par défaut (1807)</button>
-        </div>
-      </div>`
-    )
-    .join("");
-
-  return `
-    <button class="back-link" data-action="home">← Menu principal</button>
-    <h2 class="page-title">Utilisateurs</h2>
-    <p class="page-subtitle">Comptes et droits d'accès. Un administrateur a automatiquement accès à l'annuaire.</p>
-    <button class="btn-ghost" data-action="generateUsersFromDirectory" style="margin-bottom:16px;">📇 Créer les comptes depuis l'annuaire (sauf « Autre »)</button>
-    ${rows}
-    <button class="add-vehicle-btn" data-action="addUser">+ Ajouter un utilisateur</button>
-    <div class="config-actions">
-      <button class="btn-secondary" data-action="home">Retour</button>
-      <button class="btn-primary" id="saveUsersBtn" ${usersDirty ? "" : "disabled"}>Enregistrer les modifications</button>
     </div>`;
 }
 
@@ -1231,8 +1163,27 @@ function renderDirectoryConfig() {
   if (!personnelDraft) personnelDraft = JSON.parse(JSON.stringify(state.personnel || []));
 
   const rows = personnelDraft
-    .map(
-      (c) => `
+    .map((c) => {
+      const isAutre = (c.grade || "") === "Autre";
+      const accountBlock = isAutre
+        ? `<p class="muted" style="font-size:12px; margin-top:8px;">Grade « Autre » : pas de compte de connexion.</p>`
+        : `
+      <div class="config-item-row" style="margin-top:8px;">
+        <input class="input-inline-small" data-role="contactUsername" data-contact="${c.id}" value="${escapeHtml(c.username || "")}" placeholder="identifiant (auto : prenom.nom)" />
+        <input class="input-inline-small" data-role="contactNewCode" data-contact="${c.id}" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="Nouveau code (vide = inchangé)" value="${escapeHtml(c.newCode || "")}" />
+      </div>
+      <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap; align-items:center;">
+        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#5B6770;">
+          <input type="checkbox" data-role="contactIsAdmin" data-contact="${c.id}" ${c.isAdmin ? "checked" : ""} /> Administrateur
+        </label>
+        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#5B6770;">
+          <input type="checkbox" data-role="contactCanViewDirectory" data-contact="${c.id}" ${c.canViewDirectory ? "checked" : ""} /> Accès annuaire
+        </label>
+        <button class="btn-ghost" data-action="resetContactCode" data-contact="${c.id}">Remettre code par défaut (1807)</button>
+      </div>
+      <p class="muted" style="font-size:11px; margin-top:6px;">${c.userId ? "Compte existant — sera mis à jour à l'enregistrement." : "Nouveau compte créé automatiquement à l'enregistrement."}</p>`;
+
+      return `
     <div class="config-card">
       <div class="config-card-head">
         <input class="input-inline-small" data-role="contactPrenom" data-contact="${c.id}" value="${escapeHtml(c.prenom || "")}" placeholder="Prénom" style="max-width:130px;" />
@@ -1249,13 +1200,14 @@ function renderDirectoryConfig() {
         <input class="input-inline-small" data-role="contactEmail" data-contact="${c.id}" value="${escapeHtml(c.email || "")}" placeholder="Email" />
       </div>
       <input class="input-inline-small" data-role="contactNotes" data-contact="${c.id}" value="${escapeHtml(c.notes || "")}" placeholder="Remarque (optionnel)" style="width:100%; margin-top:6px;" />
-    </div>`
-    )
+      ${accountBlock}
+    </div>`;
+    })
     .join("");
 
   return `
     <h2 class="page-title">Annuaire — modification</h2>
-    <p class="page-subtitle">Ajouter, modifier ou supprimer des contacts</p>
+    <p class="page-subtitle">Ajouter, modifier ou supprimer des contacts. Un compte de connexion est géré automatiquement pour chaque contact, sauf grade « Autre ».</p>
     ${rows}
     <button class="add-vehicle-btn" data-action="addContact">+ Ajouter un contact</button>
     <div class="config-actions">
@@ -1563,7 +1515,19 @@ function attachHandlers() {
         goto("directory");
       }
       else if (action === "addContact") {
-        personnelDraft.push({ id: uid(), prenom: "", nom: "", grade: "", telephone: "", email: "", notes: "" });
+        personnelDraft.push({
+          id: uid(),
+          prenom: "",
+          nom: "",
+          grade: "",
+          telephone: "",
+          email: "",
+          notes: "",
+          userId: null,
+          username: "",
+          isAdmin: false,
+          canViewDirectory: false,
+        });
         personnelDirty = true;
         render();
       }
@@ -1611,81 +1575,13 @@ function attachHandlers() {
         reservationVehiclesDirty = true;
         render();
       }
-      else if (action === "goUsers") {
-        if (!requireAdminOrAlert()) return;
-        state.loading = true;
-        render();
-        await ensureUsersLoaded();
-        state.loading = false;
-        goto("usersManage");
-      }
-      else if (action === "addUser") {
-        usersDraft.push({ id: uid(), username: "", displayName: "", isAdmin: false, canViewDirectory: false, mustChangeCode: true });
-        usersDirty = true;
-        render();
-      }
-      else if (action === "removeUser") {
-        usersDraft = usersDraft.filter((u) => u.id !== el.dataset.user);
-        usersDirty = true;
-        render();
-      }
-      else if (action === "resetUserCode") {
-        const u = usersDraft.find((u) => u.id === el.dataset.user);
-        if (u && confirm(`Remettre le code de ${u.displayName || u.username} à la valeur par défaut (1807) ? La personne devra en choisir un nouveau à sa prochaine connexion.`)) {
-          u.newCode = "1807";
-          u.mustChangeCode = true;
-          usersDirty = true;
+      else if (action === "resetContactCode") {
+        const c = personnelDraft.find((c) => c.id === contactId);
+        if (c && confirm(`Remettre le code de ${c.prenom || ""} ${c.nom || ""} à la valeur par défaut (1807) ? La personne devra en choisir un nouveau à sa prochaine connexion.`)) {
+          c.newCode = "1807";
+          personnelDirty = true;
           render();
         }
-      }
-      else if (action === "generateUsersFromDirectory") {
-        state.loading = true;
-        render();
-        try {
-          if (state.personnel === null) await ensurePersonnelLoaded();
-        } finally {
-          state.loading = false;
-        }
-        const existingUsernames = new Set(usersDraft.map((u) => (u.username || "").toLowerCase()));
-        const updatedPersonnel = (state.personnel || []).map((c) => ({ ...c }));
-        let created = 0;
-        let skippedNoName = 0;
-        updatedPersonnel
-          .filter((c) => (c.grade || "") !== "Autre")
-          .forEach((c) => {
-            const prenom = (c.prenom || "").trim();
-            const nom = (c.nom || "").trim();
-            if (!prenom || !nom) { skippedNoName++; return; }
-            const username = `${normalizeUsernamePart(prenom)}.${normalizeUsernamePart(nom)}`;
-            if (!username || username === "." || existingUsernames.has(username)) return;
-            const newUserId = uid();
-            usersDraft.push({
-              id: newUserId,
-              username,
-              displayName: `${prenom} ${nom}`,
-              isAdmin: false,
-              canViewDirectory: false,
-              newCode: "1807",
-              mustChangeCode: true,
-            });
-            c.userId = newUserId; // relie le contact à son compte, pour la suppression en cascade
-            existingUsernames.add(username);
-            created++;
-          });
-        usersDirty = usersDirty || created > 0;
-        if (created > 0) {
-          try {
-            await savePersonnelRemote(updatedPersonnel);
-          } catch (e) {
-            state.error = "Comptes créés, mais la liaison avec l'annuaire a échoué : " + e.message;
-          }
-        }
-        render();
-        alert(
-          `${created} compte(s) créé(s) avec le code "1807".` +
-          (skippedNoName ? ` ${skippedNoName} contact(s) ignoré(s) (prénom ou nom manquant).` : "") +
-          `\n\nPense à cliquer sur "Enregistrer les modifications" pour valider.`
-        );
       }
       else if (action === "dashboard") goto("dashboard");
       else if (action === "detail") goto("detail", vehicleId);
@@ -1954,6 +1850,8 @@ function attachHandlers() {
     ["contactTelephone", "telephone"],
     ["contactEmail", "email"],
     ["contactNotes", "notes"],
+    ["contactUsername", "username"],
+    ["contactNewCode", "newCode"],
   ];
   contactFields.forEach(([role, field]) => {
     app.querySelectorAll(`[data-role="${role}"]`).forEach((el) =>
@@ -1964,6 +1862,20 @@ function attachHandlers() {
       })
     );
   });
+  app.querySelectorAll('[data-role="contactIsAdmin"]').forEach((el) =>
+    el.addEventListener("change", (e) => {
+      const c = personnelDraft.find((c) => c.id === el.dataset.contact);
+      if (c) c.isAdmin = e.target.checked;
+      personnelDirty = true;
+    })
+  );
+  app.querySelectorAll('[data-role="contactCanViewDirectory"]').forEach((el) =>
+    el.addEventListener("change", (e) => {
+      const c = personnelDraft.find((c) => c.id === el.dataset.contact);
+      if (c) c.canViewDirectory = e.target.checked;
+      personnelDirty = true;
+    })
+  );
 
   const savePersonnelBtn = document.getElementById("savePersonnelBtn");
   if (savePersonnelBtn) {
@@ -1975,31 +1887,96 @@ function attachHandlers() {
           (orig) => !personnelDraft.find((c) => c.id === orig.id)
         );
 
-        await savePersonnelRemote(personnelDraft);
+        await ensureUsersLoaded();
+        const users = (state.users || []).slice();
+        let usersChanged = false;
 
-        if (removedContacts.length) {
-          await ensureUsersLoaded();
-          const remainingUsers = (state.users || []).slice();
-          let removedAccountCount = 0;
+        // 1. Comptes des contacts supprimés : supprimés en cascade.
+        removedContacts.forEach((contact) => {
+          let idx = -1;
+          if (contact.userId) {
+            idx = users.findIndex((u) => u.id === contact.userId);
+          }
+          if (idx === -1 && contact.prenom && contact.nom) {
+            const expectedUsername = `${normalizeUsernamePart(contact.prenom)}.${normalizeUsernamePart(contact.nom)}`;
+            idx = users.findIndex((u) => u.username === expectedUsername);
+          }
+          if (idx !== -1) {
+            users.splice(idx, 1);
+            usersChanged = true;
+          }
+        });
 
-          removedContacts.forEach((contact) => {
-            let idx = -1;
+        // 2. Pour chaque contact restant : créer, synchroniser ou retirer son compte
+        //    selon le grade (pas de compte pour "Autre") et les droits cochés.
+        personnelDraft.forEach((contact) => {
+          const isAutre = (contact.grade || "") === "Autre";
+
+          if (isAutre) {
             if (contact.userId) {
-              idx = remainingUsers.findIndex((u) => u.id === contact.userId);
+              const idx = users.findIndex((u) => u.id === contact.userId);
+              if (idx !== -1) {
+                users.splice(idx, 1);
+                usersChanged = true;
+              }
+              contact.userId = null;
+              contact.username = "";
             }
-            if (idx === -1 && contact.prenom && contact.nom) {
-              const expectedUsername = `${normalizeUsernamePart(contact.prenom)}.${normalizeUsernamePart(contact.nom)}`;
-              idx = remainingUsers.findIndex((u) => u.username === expectedUsername);
-            }
-            if (idx !== -1) {
-              remainingUsers.splice(idx, 1);
-              removedAccountCount++;
-            }
-          });
+            return;
+          }
 
-          if (removedAccountCount > 0) {
-            await saveUsersRemote(remainingUsers);
-            usersDraft = null; // force un rechargement propre si l'écran Utilisateurs est rouvert
+          const prenom = (contact.prenom || "").trim();
+          const nom = (contact.nom || "").trim();
+          if (!prenom || !nom) return; // pas assez d'info pour créer un compte
+
+          let idx = contact.userId ? users.findIndex((u) => u.id === contact.userId) : -1;
+
+          if (idx === -1) {
+            const username = (contact.username || `${normalizeUsernamePart(prenom)}.${normalizeUsernamePart(nom)}`).trim();
+            const newUser = {
+              id: uid(),
+              username,
+              displayName: `${prenom} ${nom}`,
+              isAdmin: !!contact.isAdmin,
+              canViewDirectory: !!contact.canViewDirectory,
+              newCode: "1807",
+              mustChangeCode: true,
+            };
+            users.push(newUser);
+            contact.userId = newUser.id;
+            contact.username = username;
+            usersChanged = true;
+          } else {
+            const u = users[idx];
+            const username = (contact.username || u.username || "").trim() || u.username;
+            u.username = username;
+            u.displayName = `${prenom} ${nom}`;
+            u.isAdmin = !!contact.isAdmin;
+            u.canViewDirectory = !!contact.canViewDirectory;
+            if (contact.newCode) {
+              u.newCode = contact.newCode;
+              u.mustChangeCode = true;
+            }
+            contact.username = username;
+            usersChanged = true;
+          }
+          delete contact.newCode; // champ transitoire, ne se stocke pas sur le contact
+        });
+
+        await savePersonnelRemote(personnelDraft);
+        if (usersChanged) {
+          await saveUsersRemote(users);
+          const me = users.find((u) => u.id === state.currentUser.id);
+          if (me) {
+            if (me.newCode) state.currentCode = me.newCode;
+            state.currentUser = {
+              id: me.id,
+              username: me.username,
+              displayName: me.displayName,
+              isAdmin: !!me.isAdmin,
+              canViewDirectory: !!me.canViewDirectory,
+            };
+            saveSession(me.username, state.currentCode);
           }
         }
 
@@ -2105,76 +2082,6 @@ function attachHandlers() {
         state.error = "Échec de l'enregistrement des véhicules : " + e.message;
         saveResaVehiclesBtn.disabled = false;
         saveResaVehiclesBtn.textContent = "Enregistrer les véhicules";
-        render();
-      }
-    });
-  }
-
-  const userFieldMap = [
-    ["userDisplayName", "displayName"],
-    ["userUsername", "username"],
-    ["userNewCode", "newCode"],
-  ];
-  userFieldMap.forEach(([role, field]) => {
-    app.querySelectorAll(`[data-role="${role}"]`).forEach((el) =>
-      el.addEventListener("input", (e) => {
-        const u = usersDraft.find((u) => u.id === el.dataset.user);
-        if (u) u[field] = e.target.value;
-        usersDirty = true;
-      })
-    );
-  });
-  app.querySelectorAll('[data-role="userIsAdmin"]').forEach((el) =>
-    el.addEventListener("change", (e) => {
-      const u = usersDraft.find((u) => u.id === el.dataset.user);
-      if (u) u.isAdmin = e.target.checked;
-      usersDirty = true;
-    })
-  );
-  app.querySelectorAll('[data-role="userCanViewDirectory"]').forEach((el) =>
-    el.addEventListener("change", (e) => {
-      const u = usersDraft.find((u) => u.id === el.dataset.user);
-      if (u) u.canViewDirectory = e.target.checked;
-      usersDirty = true;
-    })
-  );
-
-  const saveUsersBtn = document.getElementById("saveUsersBtn");
-  if (saveUsersBtn) {
-    saveUsersBtn.addEventListener("click", async () => {
-      const missing = usersDraft.filter((u) => !u.username || !u.username.trim());
-      if (missing.length) {
-        state.error = "Chaque utilisateur doit avoir un identifiant.";
-        render();
-        return;
-      }
-      saveUsersBtn.disabled = true;
-      saveUsersBtn.textContent = "Enregistrement…";
-      try {
-        await saveUsersRemote(usersDraft);
-        usersDirty = false;
-        // Si l'utilisateur connecté a modifié son propre compte (nom, identifiant, code, droits),
-        // on resynchronise sa session pour rester cohérent.
-        const me = usersDraft.find((u) => u.id === state.currentUser.id);
-        if (me) {
-          if (me.newCode) {
-            state.currentCode = me.newCode;
-          }
-          state.currentUser = {
-            id: me.id,
-            username: me.username,
-            displayName: me.displayName,
-            isAdmin: !!me.isAdmin,
-            canViewDirectory: !!me.canViewDirectory,
-          };
-          saveSession(me.username, state.currentCode);
-        }
-        usersDraft = null;
-        render();
-      } catch (e) {
-        state.error = "Échec de l'enregistrement des utilisateurs : " + e.message;
-        saveUsersBtn.disabled = false;
-        saveUsersBtn.textContent = "Enregistrer les modifications";
         render();
       }
     });
