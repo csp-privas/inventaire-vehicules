@@ -1,4 +1,4 @@
-const CACHE_NAME = "inventaire-vehicules-v24";
+const CACHE_NAME = "inventaire-vehicules-v25";
 const APP_SHELL = ["./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (event) => {

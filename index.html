@@ -1322,8 +1322,7 @@ function renderReservationVehicle() {
     <p style="font-family:'Barlow Condensed',sans-serif; font-weight:800; font-size:18px; margin:20px 0 10px; border-bottom:2px solid #C8372E; padding-bottom:6px;">Réserver ce véhicule</p>
 
     <label class="field-label">Nom</label>
-    <input class="field" id="resaNameInput" placeholder="Ton nom" value="${escapeHtml(d.personName)}" />
-    ${d.touched && !d.personName.trim() ? `<p class="field-err">Indique ton nom.</p>` : ""}
+    <p style="font-size:14px; font-weight:600; margin:0 0 8px;">${escapeHtml(d.personName) || "—"}</p>
 
     <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
       <div style="flex:1; min-width:140px;">
@@ -1991,7 +1990,6 @@ function attachHandlers() {
   }
 
   const resaFieldMap = [
-    ["resaNameInput", "personName"],
     ["resaStartDate", "startDate"],
     ["resaStartTime", "startTime"],
     ["resaEndDate", "endDate"],
