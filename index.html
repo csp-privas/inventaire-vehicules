@@ -1571,6 +1571,12 @@ function attachHandlers() {
         render();
       }
       else if (action === "removeContact") {
+        const contact = personnelDraft.find((c) => c.id === contactId);
+        const hasLikelyAccount =
+          contact && (contact.userId || (contact.prenom && contact.nom));
+        if (hasLikelyAccount) {
+          if (!confirm("Le compte de connexion associé à ce contact (s'il existe) sera aussi supprimé à l'enregistrement. Continuer ?")) return;
+        }
         personnelDraft = personnelDraft.filter((c) => c.id !== contactId);
         personnelDirty = true;
         render();
@@ -1635,9 +1641,10 @@ function attachHandlers() {
           state.loading = false;
         }
         const existingUsernames = new Set(usersDraft.map((u) => (u.username || "").toLowerCase()));
+        const updatedPersonnel = (state.personnel || []).map((c) => ({ ...c }));
         let created = 0;
         let skippedNoName = 0;
-        (state.personnel || [])
+        updatedPersonnel
           .filter((c) => (c.grade || "") !== "Autre")
           .forEach((c) => {
             const prenom = (c.prenom || "").trim();
@@ -1645,8 +1652,9 @@ function attachHandlers() {
             if (!prenom || !nom) { skippedNoName++; return; }
             const username = `${normalizeUsernamePart(prenom)}.${normalizeUsernamePart(nom)}`;
             if (!username || username === "." || existingUsernames.has(username)) return;
+            const newUserId = uid();
             usersDraft.push({
-              id: uid(),
+              id: newUserId,
               username,
               displayName: `${prenom} ${nom}`,
               isAdmin: false,
@@ -1654,10 +1662,18 @@ function attachHandlers() {
               newCode: "1807",
               mustChangeCode: true,
             });
+            c.userId = newUserId; // relie le contact à son compte, pour la suppression en cascade
             existingUsernames.add(username);
             created++;
           });
         usersDirty = usersDirty || created > 0;
+        if (created > 0) {
+          try {
+            await savePersonnelRemote(updatedPersonnel);
+          } catch (e) {
+            state.error = "Comptes créés, mais la liaison avec l'annuaire a échoué : " + e.message;
+          }
+        }
         render();
         alert(
           `${created} compte(s) créé(s) avec le code "1807".` +
@@ -1953,7 +1969,38 @@ function attachHandlers() {
       savePersonnelBtn.disabled = true;
       savePersonnelBtn.textContent = "Enregistrement…";
       try {
+        const removedContacts = (state.personnel || []).filter(
+          (orig) => !personnelDraft.find((c) => c.id === orig.id)
+        );
+
         await savePersonnelRemote(personnelDraft);
+
+        if (removedContacts.length) {
+          await ensureUsersLoaded();
+          const remainingUsers = (state.users || []).slice();
+          let removedAccountCount = 0;
+
+          removedContacts.forEach((contact) => {
+            let idx = -1;
+            if (contact.userId) {
+              idx = remainingUsers.findIndex((u) => u.id === contact.userId);
+            }
+            if (idx === -1 && contact.prenom && contact.nom) {
+              const expectedUsername = `${normalizeUsernamePart(contact.prenom)}.${normalizeUsernamePart(contact.nom)}`;
+              idx = remainingUsers.findIndex((u) => u.username === expectedUsername);
+            }
+            if (idx !== -1) {
+              remainingUsers.splice(idx, 1);
+              removedAccountCount++;
+            }
+          });
+
+          if (removedAccountCount > 0) {
+            await saveUsersRemote(remainingUsers);
+            usersDraft = null; // force un rechargement propre si l'écran Utilisateurs est rouvert
+          }
+        }
+
         personnelDirty = false;
         goto("directory");
       } catch (e) {
