@@ -139,7 +139,7 @@
 // CONFIGURATION — colle ici l'URL de ton Google Apps Script Web App
 // (voir GUIDE-COMPLET.md)
 // =====================================================================
-const API_URL = "https://script.google.com/macros/s/AKfycbxMChtW1Nc5kd1a1GLgBPzp-tJGx1G-4DSlsuchk-_OTJGK4GlOb2SpoZBzvSAzYD5eIg/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycbyXJoCpQIRlgbQ2adXKB8-pCXTym-7iXGfeW_r3DkZazMgo3M9NHMcd1vD-m70ldCfN3A/exec";
 
 // ---------------------------------------------------------------------
 // State
@@ -153,7 +153,7 @@ let state = {
   loading: false,
   error: null,
   currentUser: null, // { id, username, displayName, isAdmin, canViewDirectory }
-  currentPassword: "",
+  currentCode: "",
   personnel: null,
   recapVehicleId: null,
   recapDefects: null,
@@ -293,7 +293,7 @@ async function apiPost(action, payload = {}) {
 }
 
 function creds() {
-  return { username: state.currentUser ? state.currentUser.username : "", password: state.currentPassword };
+  return { username: state.currentUser ? state.currentUser.username : "", code: state.currentCode };
 }
 
 async function loadAll() {
@@ -315,14 +315,14 @@ async function loadAll() {
 // ---------------------------------------------------------------------
 // Authentification
 // ---------------------------------------------------------------------
-async function attemptLogin(username, password) {
-  const data = await apiPost("login", { username, password });
+async function attemptLogin(username, code) {
+  const data = await apiPost("login", { username, code });
   return data.ok ? data.user : null;
 }
 
-function saveSession(username, password) {
+function saveSession(username, code) {
   try {
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ username, password }));
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ username, code }));
   } catch (e) {}
 }
 
@@ -426,7 +426,7 @@ async function ensureUsersLoaded() {
 
 async function saveUsersRemote(users) {
   await apiPost("saveUsers", { users, ...creds() });
-  state.users = users.map(({ newPassword, ...rest }) => rest);
+  state.users = users.map(({ newCode, ...rest }) => rest);
 }
 
 function latestFor(vehicleId) {
@@ -535,7 +535,7 @@ document.getElementById("logoutBtn").addEventListener("click", () => {
   if (!confirm("Se déconnecter ?")) return;
   clearSession();
   state.currentUser = null;
-  state.currentPassword = "";
+  state.currentCode = "";
   state.config = null;
   state.history = [];
   state.personnel = null;
@@ -685,7 +685,7 @@ function render() {
 // ---------------------------------------------------------------------
 // Connexion
 // ---------------------------------------------------------------------
-let loginDraft = { username: "", password: "", touched: false, submitting: false, error: "" };
+let loginDraft = { username: "", code: "", touched: false, submitting: false, error: "" };
 
 function renderLogin() {
   const d = loginDraft;
@@ -697,9 +697,9 @@ function renderLogin() {
       <label class="field-label">Identifiant</label>
       <input class="field" id="loginUsername" placeholder="prenom.nom" value="${escapeHtml(d.username)}" autocapitalize="none" autocomplete="username" />
 
-      <label class="field-label">Mot de passe</label>
-      <input class="field" id="loginPassword" type="password" autocomplete="current-password" value="${escapeHtml(d.password)}" />
-      <p class="muted" style="font-size:11px; margin-top:4px;">Une fois configuré, ton code à 4 chiffres fonctionne aussi ici.</p>
+      <label class="field-label">Code à 4 chiffres</label>
+      <input class="field" id="loginCode" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off"
+        style="letter-spacing:0.3em; text-align:center; font-family:'JetBrains Mono',monospace; font-size:22px;" value="${escapeHtml(d.code)}" />
 
       ${d.touched && d.error ? `<p class="field-err">${escapeHtml(d.error)}</p>` : ""}
 
@@ -711,15 +711,15 @@ function renderLogin() {
 
 function attachLoginHandlers() {
   const userEl = document.getElementById("loginUsername");
-  const passEl = document.getElementById("loginPassword");
+  const codeEl = document.getElementById("loginCode");
   if (userEl) userEl.addEventListener("input", (e) => { loginDraft.username = e.target.value; });
-  if (passEl) passEl.addEventListener("input", (e) => { loginDraft.password = e.target.value; });
+  if (codeEl) codeEl.addEventListener("input", (e) => { loginDraft.code = e.target.value; });
 
   const submit = async () => {
     const d = loginDraft;
     d.touched = true;
-    if (!d.username.trim() || !d.password) {
-      d.error = "Renseigne ton identifiant et ton mot de passe.";
+    if (!d.username.trim() || !/^\d{4}$/.test(d.code)) {
+      d.error = "Renseigne ton identifiant et ton code à 4 chiffres.";
       render();
       attachLoginHandlers();
       return;
@@ -728,29 +728,29 @@ function attachLoginHandlers() {
     render();
     attachLoginHandlers();
     try {
-      const user = await attemptLogin(d.username.trim(), d.password);
+      const user = await attemptLogin(d.username.trim(), d.code);
       if (!user) {
-        d.error = "Identifiant ou mot de passe incorrect.";
+        d.error = "Identifiant ou code incorrect.";
         d.submitting = false;
         render();
         attachLoginHandlers();
         return;
       }
       const usedUsername = d.username.trim();
-      const usedSecret = d.password;
-      loginDraft = { username: "", password: "", touched: false, submitting: false, error: "" };
+      const usedCode = d.code;
+      loginDraft = { username: "", code: "", touched: false, submitting: false, error: "" };
 
-      if (user.mustChangePassword) {
+      if (user.mustChangeCode) {
         state._setupUsername = usedUsername;
-        state._setupOldSecret = usedSecret;
+        state._setupOldSecret = usedCode;
         state._setupUser = user;
         goto("setup");
         return;
       }
 
       state.currentUser = user;
-      state.currentPassword = usedSecret;
-      saveSession(usedUsername, usedSecret);
+      state.currentCode = usedCode;
+      saveSession(usedUsername, usedCode);
       goto("home");
       await loadAll();
     } catch (e) {
@@ -763,11 +763,11 @@ function attachLoginHandlers() {
 
   const btn = document.getElementById("loginSubmitBtn");
   if (btn) btn.addEventListener("click", submit);
-  if (passEl) passEl.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+  if (codeEl) codeEl.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
 }
 
 // ---------------------------------------------------------------------
-// Première connexion : nouveau mot de passe + code à 4 chiffres
+// Première connexion : choix d'un code personnel à 4 chiffres
 // ---------------------------------------------------------------------
 let setupDraft = { newPin: "", confirmPin: "", touched: false, submitting: false, error: "" };
 
@@ -786,7 +786,7 @@ function renderSetup() {
       <label class="field-label">Confirmer le code</label>
       <input class="field" id="setupConfirmPin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4"
         style="letter-spacing:0.3em; text-align:center; font-family:'JetBrains Mono',monospace; font-size:20px;" value="${escapeHtml(d.confirmPin)}" />
-      <p class="muted" style="font-size:11px; margin-top:4px;">Choisis un code différent de 1807. Il te permettra de te reconnecter plus rapidement la prochaine fois.</p>
+      <p class="muted" style="font-size:11px; margin-top:4px;">Ce sera ton code de connexion à partir de maintenant.</p>
 
       ${d.touched && d.error ? `<p class="field-err">${escapeHtml(d.error)}</p>` : ""}
 
@@ -816,8 +816,8 @@ function attachSetupHandlers() {
       attachSetupHandlers();
       return;
     }
-    if (d.newPin === "1807") {
-      d.error = "Choisis un code différent de 1807.";
+    if (d.newPin === state._setupOldSecret) {
+      d.error = "Choisis un code différent de ton code actuel.";
       render();
       attachSetupHandlers();
       return;
@@ -835,12 +835,12 @@ function attachSetupHandlers() {
     try {
       const data = await apiPost("completeSetup", {
         username: state._setupUsername,
-        oldPassword: state._setupOldSecret,
-        newPin: d.newPin,
+        oldCode: state._setupOldSecret,
+        newCode: d.newPin,
       });
       state.currentUser = data.user;
-      state.currentPassword = state._setupOldSecret; // le mot de passe ne change pas, seul le code est ajouté
-      saveSession(state._setupUsername, state._setupOldSecret);
+      state.currentCode = d.newPin; // c'est désormais le seul et unique code du compte
+      saveSession(state._setupUsername, d.newPin);
       state._setupUsername = null;
       state._setupOldSecret = null;
       state._setupUser = null;
@@ -917,7 +917,7 @@ function renderUsersManage() {
         </div>
         <div class="config-item-row">
           <input class="input-inline-small" data-role="userUsername" data-user="${u.id}" value="${escapeHtml(u.username || "")}" placeholder="identifiant (prenom.nom)" />
-          <input class="input-inline-small" data-role="userNewPassword" data-user="${u.id}" type="password" placeholder="Nouveau mot de passe (laisser vide = inchangé)" />
+          <input class="input-inline-small" data-role="userNewCode" data-user="${u.id}" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="Nouveau code (laisser vide = inchangé)" />
         </div>
         <div style="display:flex; gap:16px; margin-top:10px; flex-wrap:wrap;">
           <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#5B6770;">
@@ -927,7 +927,7 @@ function renderUsersManage() {
             <input type="checkbox" data-role="userCanViewDirectory" data-user="${u.id}" ${u.canViewDirectory ? "checked" : ""} /> Accès annuaire
           </label>
           <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#5B6770;">
-            <input type="checkbox" data-role="userMustChangePassword" data-user="${u.id}" ${u.mustChangePassword ? "checked" : ""} /> Forcer nouveau mot de passe + code
+            <input type="checkbox" data-role="userMustChangeCode" data-user="${u.id}" ${u.mustChangeCode ? "checked" : ""} /> Forcer un nouveau code à la prochaine connexion
           </label>
         </div>
       </div>`
@@ -1617,7 +1617,7 @@ function attachHandlers() {
         goto("usersManage");
       }
       else if (action === "addUser") {
-        usersDraft.push({ id: uid(), username: "", displayName: "", isAdmin: false, canViewDirectory: false, mustChangePassword: true });
+        usersDraft.push({ id: uid(), username: "", displayName: "", isAdmin: false, canViewDirectory: false, mustChangeCode: true });
         usersDirty = true;
         render();
       }
@@ -1651,8 +1651,8 @@ function attachHandlers() {
               displayName: `${prenom} ${nom}`,
               isAdmin: false,
               canViewDirectory: false,
-              newPassword: "1807",
-              mustChangePassword: true,
+              newCode: "1807",
+              mustChangeCode: true,
             });
             existingUsernames.add(username);
             created++;
@@ -1660,7 +1660,7 @@ function attachHandlers() {
         usersDirty = usersDirty || created > 0;
         render();
         alert(
-          `${created} compte(s) créé(s) avec le mot de passe "1807".` +
+          `${created} compte(s) créé(s) avec le code "1807".` +
           (skippedNoName ? ` ${skippedNoName} contact(s) ignoré(s) (prénom ou nom manquant).` : "") +
           `\n\nPense à cliquer sur "Enregistrer les modifications" pour valider.`
         );
@@ -2064,7 +2064,7 @@ function attachHandlers() {
   const userFieldMap = [
     ["userDisplayName", "displayName"],
     ["userUsername", "username"],
-    ["userNewPassword", "newPassword"],
+    ["userNewCode", "newCode"],
   ];
   userFieldMap.forEach(([role, field]) => {
     app.querySelectorAll(`[data-role="${role}"]`).forEach((el) =>
@@ -2089,10 +2089,10 @@ function attachHandlers() {
       usersDirty = true;
     })
   );
-  app.querySelectorAll('[data-role="userMustChangePassword"]').forEach((el) =>
+  app.querySelectorAll('[data-role="userMustChangeCode"]').forEach((el) =>
     el.addEventListener("change", (e) => {
       const u = usersDraft.find((u) => u.id === el.dataset.user);
-      if (u) u.mustChangePassword = e.target.checked;
+      if (u) u.mustChangeCode = e.target.checked;
       usersDirty = true;
     })
   );
@@ -2111,12 +2111,12 @@ function attachHandlers() {
       try {
         await saveUsersRemote(usersDraft);
         usersDirty = false;
-        // Si l'utilisateur connecté a modifié son propre compte (nom, identifiant, mot de passe, droits),
+        // Si l'utilisateur connecté a modifié son propre compte (nom, identifiant, code, droits),
         // on resynchronise sa session pour rester cohérent.
         const me = usersDraft.find((u) => u.id === state.currentUser.id);
         if (me) {
-          if (me.newPassword) {
-            state.currentPassword = me.newPassword;
+          if (me.newCode) {
+            state.currentCode = me.newCode;
           }
           state.currentUser = {
             id: me.id,
@@ -2125,7 +2125,7 @@ function attachHandlers() {
             isAdmin: !!me.isAdmin,
             canViewDirectory: !!me.canViewDirectory,
           };
-          saveSession(me.username, state.currentPassword);
+          saveSession(me.username, state.currentCode);
         }
         usersDraft = null;
         render();
@@ -2144,7 +2144,7 @@ function attachHandlers() {
 // ---------------------------------------------------------------------
 async function boot() {
   const session = readSession();
-  if (!session || !session.username || !session.password) {
+  if (!session || !session.username || !session.code) {
     render();
     attachLoginHandlers();
     return;
@@ -2152,18 +2152,18 @@ async function boot() {
   state.loading = true;
   render();
   try {
-    const user = await attemptLogin(session.username, session.password);
+    const user = await attemptLogin(session.username, session.code);
     if (user) {
       state.loading = false;
-      if (user.mustChangePassword) {
+      if (user.mustChangeCode) {
         state._setupUsername = session.username;
-        state._setupOldSecret = session.password;
+        state._setupOldSecret = session.code;
         state._setupUser = user;
         goto("setup");
         return;
       }
       state.currentUser = user;
-      state.currentPassword = session.password;
+      state.currentCode = session.code;
       goto("home");
       await loadAll();
       return;
