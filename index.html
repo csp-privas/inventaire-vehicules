@@ -126,6 +126,7 @@
     </div>
     <div style="display:flex; gap:8px; align-items:center;">
       <span id="userBadge" style="display:none; font-family:'JetBrains Mono',monospace; font-size:11px; color:#8A8F94;"></span>
+      <a id="guideBtn" class="icon-btn" style="display:none; text-decoration:none;" title="Guide d'utilisation" href="https://csp-privas.github.io/inventaire-vehicules/Guide-utilisation-CSP-Privas.pdf" target="_blank" rel="noopener">📖</a>
       <button id="homeBtn" class="icon-btn" style="display:none;" title="Menu principal">⌂</button>
       <button id="headerBtn" class="icon-btn" style="display:none;">⚙</button>
       <button id="logoutBtn" class="icon-btn" style="display:none;" title="Déconnexion">⏻</button>
@@ -499,6 +500,7 @@ function updateHeader() {
   const homeBtn = document.getElementById("homeBtn");
   const headerBtn = document.getElementById("headerBtn");
   const logoutBtn = document.getElementById("logoutBtn");
+  const guideBtn = document.getElementById("guideBtn");
   const userBadge = document.getElementById("userBadge");
   const brandTitle = document.getElementById("brandTitle");
   const brandSub = document.getElementById("brandSub");
@@ -506,6 +508,7 @@ function updateHeader() {
   const loggedIn = !!state.currentUser;
   homeBtn.style.display = loggedIn && section !== "home" ? "flex" : "none";
   logoutBtn.style.display = loggedIn ? "flex" : "none";
+  guideBtn.style.display = loggedIn ? "flex" : "none";
   userBadge.style.display = loggedIn ? "inline" : "none";
   userBadge.textContent = loggedIn ? state.currentUser.displayName : "";
   headerBtn.style.display = loggedIn && ["inventory", "directory", "reservation"].includes(section) ? "flex" : "none";
