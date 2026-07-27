@@ -917,18 +917,16 @@ function renderUsersManage() {
         </div>
         <div class="config-item-row">
           <input class="input-inline-small" data-role="userUsername" data-user="${u.id}" value="${escapeHtml(u.username || "")}" placeholder="identifiant (prenom.nom)" />
-          <input class="input-inline-small" data-role="userNewCode" data-user="${u.id}" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="Nouveau code (laisser vide = inchangé)" />
+          <input class="input-inline-small" data-role="userNewCode" data-user="${u.id}" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="Nouveau code (laisser vide = inchangé)" value="${escapeHtml(u.newCode || "")}" />
         </div>
-        <div style="display:flex; gap:16px; margin-top:10px; flex-wrap:wrap;">
+        <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; align-items:center;">
           <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#5B6770;">
             <input type="checkbox" data-role="userIsAdmin" data-user="${u.id}" ${u.isAdmin ? "checked" : ""} /> Administrateur
           </label>
           <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#5B6770;">
             <input type="checkbox" data-role="userCanViewDirectory" data-user="${u.id}" ${u.canViewDirectory ? "checked" : ""} /> Accès annuaire
           </label>
-          <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#5B6770;">
-            <input type="checkbox" data-role="userMustChangeCode" data-user="${u.id}" ${u.mustChangeCode ? "checked" : ""} /> Forcer un nouveau code à la prochaine connexion
-          </label>
+          <button class="btn-ghost" data-action="resetUserCode" data-user="${u.id}">Remettre code par défaut (1807)</button>
         </div>
       </div>`
     )
@@ -1131,8 +1129,7 @@ function renderForm() {
     step === 0
       ? `
     <label class="field-label">Contrôlé par</label>
-    <input class="field" id="checkedByInput" placeholder="Ton nom" value="${escapeHtml(formDraft.checkedBy)}" />
-    ${formDraft.touched && !nameOk ? `<p class="field-err">Indique ton nom avant de commencer.</p>` : ""}`
+    <p style="font-size:14px; font-weight:600; margin:0 0 8px;">${escapeHtml(formDraft.checkedBy) || "—"}</p>`
       : "";
 
   const itemsHtml = current.items
@@ -1632,6 +1629,15 @@ function attachHandlers() {
         usersDirty = true;
         render();
       }
+      else if (action === "resetUserCode") {
+        const u = usersDraft.find((u) => u.id === el.dataset.user);
+        if (u && confirm(`Remettre le code de ${u.displayName || u.username} à la valeur par défaut (1807) ? La personne devra en choisir un nouveau à sa prochaine connexion.`)) {
+          u.newCode = "1807";
+          u.mustChangeCode = true;
+          usersDirty = true;
+          render();
+        }
+      }
       else if (action === "generateUsersFromDirectory") {
         state.loading = true;
         render();
@@ -1823,10 +1829,6 @@ function attachHandlers() {
     });
   });
 
-  const checkedByInput = document.getElementById("checkedByInput");
-  if (checkedByInput) {
-    checkedByInput.addEventListener("input", (e) => { formDraft.checkedBy = e.target.value; });
-  }
   const notesInput = document.getElementById("notesInput");
   if (notesInput) {
     notesInput.addEventListener("input", (e) => { formDraft.notes = e.target.value; });
@@ -2133,13 +2135,6 @@ function attachHandlers() {
     el.addEventListener("change", (e) => {
       const u = usersDraft.find((u) => u.id === el.dataset.user);
       if (u) u.canViewDirectory = e.target.checked;
-      usersDirty = true;
-    })
-  );
-  app.querySelectorAll('[data-role="userMustChangeCode"]').forEach((el) =>
-    el.addEventListener("change", (e) => {
-      const u = usersDraft.find((u) => u.id === el.dataset.user);
-      if (u) u.mustChangeCode = e.target.checked;
       usersDirty = true;
     })
   );
