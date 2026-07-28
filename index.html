@@ -62,8 +62,8 @@
   .group-header:first-child { margin-top:0; }
   .group-header-form { font-family:'Barlow Condensed',sans-serif; font-weight:800; font-size:21px; letter-spacing:0.02em; text-transform:uppercase; color:#1C1F22; margin:24px 0 8px; padding-bottom:5px; border-bottom:2px solid #C8372E; }
   .group-header-form:first-child { margin-top:0; }
-  .item-row { display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:4px; }
-  .item-name { flex:1; font-size:14px; }
+  .item-row { display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:4px; flex-wrap:wrap; }
+  .item-name { flex:1; font-size:14px; min-width:120px; }
   .item-status { font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:700; letter-spacing:0.04em; }
 
   .empty-box { display:flex; flex-direction:column; align-items:center; gap:8px; background:#fff; border:1px dashed #D8D3C6; border-radius:4px; padding:36px 0; margin-bottom:20px; }
@@ -1015,10 +1015,15 @@ function renderDetail() {
           .map((it) => {
             const s = rec.results[it.id] || "ok";
             const meta = STATUS[s];
+            const fixBtn =
+              s !== "ok"
+                ? `<button class="btn-ghost" data-action="fixItem" data-vehicle="${v.id}" data-item="${it.id}" style="font-size:11px; padding:5px 9px; flex-shrink:0;">✓ Remise en conformité</button>`
+                : "";
             return `<li class="item-row" style="background:${meta.bg}">
               <span style="color:${meta.color}">●</span>
               <span class="item-name">${escapeHtml(it.name)}</span>
               <span class="item-status" style="color:${meta.color}">${meta.label}</span>
+              ${fixBtn}
             </li>`;
           })
           .join("");
@@ -1718,6 +1723,29 @@ function attachHandlers() {
       else if (action === "toggleDetailShowAll") {
         state.detailShowAll = !state.detailShowAll;
         render();
+      }
+      else if (action === "fixItem") {
+        const v = state.config.vehicles.find((x) => x.id === vehicleId);
+        const rec = latestFor(vehicleId);
+        const item = v && v.items.find((i) => i.id === itemId);
+        if (!v || !rec || !item) return;
+        if (!confirm(`Marquer « ${item.name} » comme remis en conformité (OK) ?`)) return;
+
+        el.disabled = true;
+        try {
+          await submitInventoryRemote({
+            vehicleId: v.id,
+            checkedBy: (state.currentUser && state.currentUser.displayName) || "",
+            timestamp: new Date().toISOString(),
+            results: { ...rec.results, [itemId]: "ok" },
+            notes: `Remise en conformité : ${item.name}`,
+          });
+          render();
+        } catch (e) {
+          state.error = "Échec de l'enregistrement : " + e.message;
+          el.disabled = false;
+          render();
+        }
       }
       else if (action === "toggleCollapse") {
         if (configCollapsed.has(vehicleId)) configCollapsed.delete(vehicleId);
