@@ -161,14 +161,16 @@
 // CONFIGURATION — colle ici l'URL de ton Google Apps Script Web App
 // (voir GUIDE-COMPLET.md)
 // =====================================================================
-const API_URL = "https://script.google.com/macros/s/AKfycbzx4aBnnlAGQlKSt27Ws5IpqBC8ChTFezR7X-qFjOst976zkztqkvXr4wC8C0tAf6jpkw/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycby7L1Jeqj0qHMSMP_Q_q7YsBQZzUZPvgTRNVAUTOtvDjYB0zIODFXrvGL6K_0KOZr9Z/exec";
 
 // ---------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------
 let state = {
   config: null,
-  history: [],
+  latestByVehicle: {},
+  historyCounts: {},
+  vehicleHistoryCache: {}, // vehicleId -> tableau complet, chargé à la demande
   view: "login", // login | setup | home | dashboard | detail | form | config | historyList | historyDetail | directory | directoryConfig | recap | reservation | reservationVehicle | reservationManage | usersManage
   selectedVehicleId: null,
   selectedEntryId: null,
@@ -325,7 +327,28 @@ async function loadAll() {
   try {
     const data = await apiGet("getData");
     state.config = normalizeConfig(data.config);
-    state.history = data.history || [];
+    state.latestByVehicle = data.latest || {};
+    state.historyCounts = data.counts || {};
+  } catch (e) {
+    state.error = "Impossible de charger les données. Vérifie la configuration (voir GUIDE-COMPLET.md).";
+  } finally {
+    state.loading = false;
+    render();
+  }
+}
+
+// Consomme une requête getData déjà lancée en parallèle de la connexion,
+// pour ne pas attendre deux allers-retours l'un après l'autre.
+async function applyPrefetchedData(dataPromise) {
+  state.loading = true;
+  state.error = null;
+  render();
+  try {
+    const data = await dataPromise;
+    if (!data) throw new Error("échec du chargement");
+    state.config = normalizeConfig(data.config);
+    state.latestByVehicle = data.latest || {};
+    state.historyCounts = data.counts || {};
   } catch (e) {
     state.error = "Impossible de charger les données. Vérifie la configuration (voir GUIDE-COMPLET.md).";
   } finally {
@@ -427,12 +450,22 @@ async function saveConfigRemote(cfg) {
 
 async function submitInventoryRemote(record) {
   const res = await apiPost("submitInventory", { record });
-  state.history.push({ ...record, id: res.id });
+  const entry = { ...record, id: res.id };
+  state.latestByVehicle[record.vehicleId] = entry;
+  state.historyCounts[record.vehicleId] = (state.historyCounts[record.vehicleId] || 0) + 1;
+  if (state.vehicleHistoryCache[record.vehicleId]) {
+    state.vehicleHistoryCache[record.vehicleId].unshift(entry);
+  }
 }
 
-async function deleteEntryRemote(id) {
+async function deleteEntryRemote(id, vehicleId) {
   await apiPost("deleteEntry", { id, ...creds() });
-  state.history = state.history.filter((h) => h.id !== id);
+  if (state.vehicleHistoryCache[vehicleId]) {
+    state.vehicleHistoryCache[vehicleId] = state.vehicleHistoryCache[vehicleId].filter((h) => h.id !== id);
+    state.historyCounts[vehicleId] = state.vehicleHistoryCache[vehicleId].length;
+    state.latestByVehicle[vehicleId] = state.vehicleHistoryCache[vehicleId][0] || null;
+    if (!state.latestByVehicle[vehicleId]) delete state.latestByVehicle[vehicleId];
+  }
 }
 
 async function ensureUsersLoaded() {
@@ -452,9 +485,7 @@ async function saveUsersRemote(users) {
 }
 
 function latestFor(vehicleId) {
-  const entries = state.history.filter((h) => h.vehicleId === vehicleId);
-  if (!entries.length) return null;
-  return entries.slice().sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0];
+  return state.latestByVehicle[vehicleId] || null;
 }
 
 function isOverdue(vehicle, record) {
@@ -464,10 +495,20 @@ function isOverdue(vehicle, record) {
 }
 
 function historyFor(vehicleId) {
-  return state.history
-    .filter((h) => h.vehicleId === vehicleId)
-    .slice()
-    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  return state.vehicleHistoryCache[vehicleId] || [];
+}
+
+async function ensureVehicleHistoryLoaded(vehicleId) {
+  if (state.vehicleHistoryCache[vehicleId]) return;
+  try {
+    const data = await apiGet("getVehicleHistory", { vehicleId });
+    state.vehicleHistoryCache[vehicleId] = (data.history || []).sort(
+      (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
+    );
+  } catch (e) {
+    state.error = "Impossible de charger l'historique : " + e.message;
+    state.vehicleHistoryCache[vehicleId] = [];
+  }
 }
 
 function renderRecap() {
@@ -560,7 +601,9 @@ document.getElementById("logoutBtn").addEventListener("click", () => {
   state.currentUser = null;
   state.currentCode = "";
   state.config = null;
-  state.history = [];
+  state.latestByVehicle = {};
+  state.historyCounts = {};
+  state.vehicleHistoryCache = {};
   state.personnel = null;
   state.reservations = null;
   state.reservationVehicles = null;
@@ -597,8 +640,7 @@ document.getElementById("headerBtn").addEventListener("click", async () => {
     if (state.personnel === null || state.users === null) {
       state.loading = true;
       render();
-      await ensurePersonnelLoaded();
-      await ensureUsersLoaded();
+      await Promise.all([ensurePersonnelLoaded(), ensureUsersLoaded()]);
       state.loading = false;
     }
     goto("directoryConfig");
@@ -742,6 +784,7 @@ function attachLoginHandlers() {
     d.submitting = true;
     render();
     attachLoginHandlers();
+    const dataPromise = apiGet("getData").catch(() => null); // lancé en parallèle, sans attendre le résultat de la connexion
     try {
       const user = await attemptLogin(d.username.trim(), d.code);
       if (!user) {
@@ -767,7 +810,7 @@ function attachLoginHandlers() {
       state.currentCode = usedCode;
       saveSession(usedUsername, usedCode);
       goto("home");
-      await loadAll();
+      await applyPrefetchedData(dataPromise);
     } catch (e) {
       d.error = "Connexion impossible pour le moment : " + e.message;
       d.submitting = false;
@@ -953,7 +996,7 @@ function renderDetail() {
     state._detailVehicleId = v.id;
   }
   const rec = latestFor(v.id);
-  const hist = historyFor(v.id);
+  const histCount = state.historyCounts[v.id] || 0;
   const overdueBanner = isOverdue(v, rec)
     ? `<div class="err-banner" style="background:#FCF1DF; color:#E8A33D;">⏰ À vérifier — dernier contrôle il y a plus de ${v.checkFrequencyDays} jour(s).</div>`
     : "";
@@ -1007,7 +1050,7 @@ function renderDetail() {
     ${body}
     <div style="display:flex; gap:10px; flex-wrap:wrap;">
       <button class="btn-primary" data-action="form" data-vehicle="${v.id}">${rec ? "Refaire l'inventaire" : "Faire l'inventaire"}</button>
-      ${hist.length ? `<button class="btn-secondary" data-action="historyList" data-vehicle="${v.id}">Historique (${hist.length})</button>` : ""}
+      ${histCount ? `<button class="btn-secondary" data-action="historyList" data-vehicle="${v.id}">Historique (${histCount})</button>` : ""}
     </div>`;
 }
 
@@ -1035,7 +1078,7 @@ function renderHistoryList() {
 
 function renderHistoryDetail() {
   const v = state.config.vehicles.find((x) => x.id === state.selectedVehicleId);
-  const entry = state.history.find((h) => h.id === state.selectedEntryId);
+  const entry = historyFor(state.selectedVehicleId).find((h) => h.id === state.selectedEntryId);
   if (!entry) return "";
   const groups = groupItemsByLocation(v);
   const rows = groups
@@ -1268,9 +1311,25 @@ function findOverlap(vehicleId, startISO, endISO, excludeId = null) {
   );
 }
 
-function nextReservation(vehicleId) {
+const SOON_UNAVAILABLE_MS = 2 * 60 * 60 * 1000; // 2 heures
+
+// État d'un véhicule à l'instant présent : en cours d'utilisation, sur le
+// point de l'être (dans moins de 2h), ou disponible (même si réservé plus tard).
+function vehicleAvailability(vehicleId) {
   const now = Date.now();
-  return reservationsFor(vehicleId).find((r) => new Date(r.end).getTime() >= now) || null;
+  const list = reservationsFor(vehicleId);
+
+  const current = list.find((r) => new Date(r.start).getTime() <= now && new Date(r.end).getTime() > now);
+  if (current) return { state: "current", reservation: current };
+
+  const upcoming = list
+    .filter((r) => new Date(r.start).getTime() > now)
+    .sort((a, b) => new Date(a.start) - new Date(b.start))[0];
+  if (upcoming && new Date(upcoming.start).getTime() - now <= SOON_UNAVAILABLE_MS) {
+    return { state: "soon", reservation: upcoming };
+  }
+
+  return { state: "available", reservation: upcoming || null };
 }
 
 function formatResaDate(iso) {
@@ -1286,16 +1345,30 @@ function renderReservationHome() {
   }
   const cards = vehicles
     .map((v) => {
-      const next = nextReservation(v.id);
-      const flagColor = next ? "#E8A33D" : "#3A7D5C";
-      const flagLabel = next ? "RÉSERVÉ" : "DISPONIBLE";
+      const avail = vehicleAvailability(v.id);
+      let flagColor, flagLabel, metaText;
+      if (avail.state === "current") {
+        flagColor = "#C8372E";
+        flagLabel = "INDISPONIBLE";
+        metaText = `Utilisé par ${escapeHtml(avail.reservation.personName)} jusqu'à ${formatResaDate(avail.reservation.end)}`;
+      } else if (avail.state === "soon") {
+        flagColor = "#E8A33D";
+        flagLabel = "BIENTÔT INDISPONIBLE";
+        metaText = `Réservé par ${escapeHtml(avail.reservation.personName)} à partir de ${formatResaDate(avail.reservation.start)}`;
+      } else {
+        flagColor = "#3A7D5C";
+        flagLabel = "DISPONIBLE";
+        metaText = avail.reservation
+          ? `Prochaine résa : ${escapeHtml(avail.reservation.personName)} · ${formatResaDate(avail.reservation.start)}`
+          : "Aucune réservation à venir";
+      }
       return `
         <button class="card" data-action="reservationVehicle" data-vehicle="${v.id}">
           <div class="card-flag" style="background:${flagColor}">${flagLabel}</div>
           <div class="card-body">
             <h2 class="card-title">${escapeHtml(v.name)}</h2>
             <p class="card-type">${escapeHtml(v.type || "")}</p>
-            <p class="card-meta">${next ? `Prochaine résa : ${escapeHtml(next.personName)} · ${formatResaDate(next.start)}` : "Aucune réservation à venir"}</p>
+            <p class="card-meta">${metaText}</p>
           </div>
         </button>`;
     })
@@ -1615,14 +1688,21 @@ function attachHandlers() {
       else if (action === "form") goto("form", vehicleId);
       else if (action === "config") { configDraft = null; configDirty = false; goto("config"); }
       else if (action === "historyList") {
-        if (requireAdminOrAlert()) goto("historyList", vehicleId);
+        if (!requireAdminOrAlert()) return;
+        if (!state.vehicleHistoryCache[vehicleId]) {
+          state.loading = true;
+          render();
+          await ensureVehicleHistoryLoaded(vehicleId);
+          state.loading = false;
+        }
+        goto("historyList", vehicleId);
       }
       else if (action === "historyDetail") {
         if (requireAdminOrAlert()) goto("historyDetail", vehicleId, entryId);
       }
       else if (action === "deleteEntry") {
         if (confirm("Supprimer définitivement cette entrée de l'historique ?")) {
-          await deleteEntryRemote(entryId);
+          await deleteEntryRemote(entryId, vehicleId);
           goto("historyList", vehicleId);
         }
       }
@@ -2124,6 +2204,7 @@ async function boot() {
   }
   state.loading = true;
   render();
+  const dataPromise = apiGet("getData").catch(() => null); // lancé en parallèle, sans attendre le résultat de la connexion
   try {
     const user = await attemptLogin(session.username, session.code);
     if (user) {
@@ -2138,7 +2219,7 @@ async function boot() {
       state.currentUser = user;
       state.currentCode = session.code;
       goto("home");
-      await loadAll();
+      await applyPrefetchedData(dataPromise);
       return;
     }
   } catch (e) {
