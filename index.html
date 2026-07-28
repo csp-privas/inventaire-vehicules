@@ -27,7 +27,16 @@
   .brand-mark { width:10px; height:28px; background:#C8372E; }
   .brand-title { font-family:'Barlow Condensed',sans-serif; font-weight:800; font-size:22px; letter-spacing:0.04em; color:#F5F3EE; margin:0; line-height:1; }
   .brand-sub { font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:0.12em; color:#8A8F94; margin:4px 0 0; }
-  .icon-btn { background:transparent; border:1px solid #3A3F45; color:#F5F3EE; border-radius:4px; padding:8px; display:flex; }
+  .icon-btn { background:transparent; border:1px solid #3A3F45; color:#F5F3EE; border-radius:6px; padding:8px; display:flex; align-items:center; justify-content:center; text-decoration:none; transition:background 0.15s, border-color 0.15s, color 0.15s; }
+  .icon-btn:hover, .icon-btn:focus-visible { background:#2A2E32; border-color:#5B6770; }
+  .icon-btn-danger:hover, .icon-btn-danger:focus-visible { background:rgba(200,55,46,0.15); border-color:#C8372E; color:#E8756D; }
+  .user-badge { display:flex; align-items:center; gap:6px; background:#2A2E32; border:1px solid #3A3F45; border-radius:999px; padding:6px 12px 6px 10px; color:#F5F3EE; }
+  .user-badge svg { color:#8A8F94; flex-shrink:0; }
+  #userBadgeName { font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:0.02em; white-space:nowrap; max-width:110px; overflow:hidden; text-overflow:ellipsis; }
+  @media (max-width: 420px) {
+    #userBadgeName { display:none; }
+    .user-badge { padding:7px; }
+  }
 
   main { max-width:880px; margin:0 auto; padding:28px 20px 60px; }
   .center-box { display:flex; flex-direction:column; align-items:center; gap:10px; padding:60px 0; }
@@ -124,12 +133,24 @@
         <p class="brand-sub" id="brandSub">MENU PRINCIPAL</p>
       </div>
     </div>
-    <div style="display:flex; gap:8px; align-items:center;">
-      <span id="userBadge" style="display:none; font-family:'JetBrains Mono',monospace; font-size:11px; color:#8A8F94;"></span>
-      <a id="guideBtn" class="icon-btn" style="display:none; text-decoration:none;" title="Guide d'utilisation" href="https://csp-privas.github.io/inventaire-vehicules/Guide-utilisation-CSP-Privas.pdf" target="_blank" rel="noopener">📖</a>
-      <button id="homeBtn" class="icon-btn" style="display:none;" title="Menu principal">⌂</button>
-      <button id="headerBtn" class="icon-btn" style="display:none;">⚙</button>
-      <button id="logoutBtn" class="icon-btn" style="display:none;" title="Déconnexion">⏻</button>
+    <div style="display:flex; gap:6px; align-items:center;">
+      <span id="userBadge" class="user-badge" style="display:none;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <span id="userBadgeName"></span>
+      </span>
+      <a id="guideBtn" class="icon-btn" style="display:none;" title="Guide d'utilisation" href="https://csp-privas.github.io/inventaire-vehicules/Guide-utilisation-CSP-Privas.pdf" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      </a>
+      <button id="homeBtn" class="icon-btn" style="display:none;" title="Menu principal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9a1 1 0 0 0 1 1H9v-6h6v6h2.5a1 1 0 0 0 1-1v-9"/></svg>
+      </button>
+      <button id="headerBtn" class="icon-btn" style="display:none;" title="Configuration">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+      <span id="headerDivider" style="display:none; width:1px; height:20px; background:#3A3F45; margin:0 2px;"></span>
+      <button id="logoutBtn" class="icon-btn icon-btn-danger" style="display:none;" title="Déconnexion">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+      </button>
     </div>
   </div>
 </header>
@@ -501,16 +522,19 @@ function updateHeader() {
   const headerBtn = document.getElementById("headerBtn");
   const logoutBtn = document.getElementById("logoutBtn");
   const guideBtn = document.getElementById("guideBtn");
+  const headerDivider = document.getElementById("headerDivider");
   const userBadge = document.getElementById("userBadge");
+  const userBadgeName = document.getElementById("userBadgeName");
   const brandTitle = document.getElementById("brandTitle");
   const brandSub = document.getElementById("brandSub");
 
   const loggedIn = !!state.currentUser;
   homeBtn.style.display = loggedIn && section !== "home" ? "flex" : "none";
   logoutBtn.style.display = loggedIn ? "flex" : "none";
+  headerDivider.style.display = loggedIn ? "block" : "none";
   guideBtn.style.display = loggedIn ? "flex" : "none";
-  userBadge.style.display = loggedIn ? "inline" : "none";
-  userBadge.textContent = loggedIn ? state.currentUser.displayName : "";
+  userBadge.style.display = loggedIn ? "flex" : "none";
+  userBadgeName.textContent = loggedIn ? state.currentUser.displayName : "";
   headerBtn.style.display = loggedIn && ["inventory", "directory", "reservation"].includes(section) ? "flex" : "none";
 
   if (section === "inventory") {
