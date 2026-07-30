@@ -161,7 +161,7 @@
 // CONFIGURATION — colle ici l'URL de ton Google Apps Script Web App
 // (voir GUIDE-COMPLET.md)
 // =====================================================================
-const API_URL = "https://script.google.com/macros/s/AKfycby7L1Jeqj0qHMSMP_Q_q7YsBQZzUZPvgTRNVAUTOtvDjYB0zIODFXrvGL6K_0KOZr9Z/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycbzw8wzhl9pr29Dks9NCusEis1fy3-Ie5vtOO3tBywmAOUhLfMpv6JhMRp2fhK7hCAO7/exec";
 
 // ---------------------------------------------------------------------
 // State
@@ -2035,6 +2035,26 @@ function attachHandlers() {
         const users = (state.users || []).slice();
         let usersChanged = false;
 
+        // 0. Filet de sécurité : fusionne d'éventuels comptes en double partageant le
+        //    même identifiant (résidus d'avant la fusion Annuaire/Utilisateurs), pour
+        //    qu'il n'y ait jamais plus d'un compte par identifiant. Le premier trouvé
+        //    est conservé (c'est celui que la réconciliation ci-dessous met à jour),
+        //    en récupérant les droits admin/annuaire des doublons avant suppression.
+        const seenUsernames = new Set();
+        for (let i = 0; i < users.length; i++) {
+          const uname = users[i].username;
+          if (seenUsernames.has(uname)) {
+            const keepIdx = users.findIndex((u) => u.username === uname);
+            if (users[i].isAdmin) users[keepIdx].isAdmin = true;
+            if (users[i].canViewDirectory) users[keepIdx].canViewDirectory = true;
+            users.splice(i, 1);
+            i--;
+            usersChanged = true;
+          } else {
+            seenUsernames.add(uname);
+          }
+        }
+
         // 1. Comptes des contacts supprimés : supprimés en cascade.
         removedContacts.forEach((contact) => {
           let idx = -1;
@@ -2074,6 +2094,13 @@ function attachHandlers() {
           if (!prenom || !nom) return; // pas assez d'info pour créer un compte
 
           let idx = contact.userId ? users.findIndex((u) => u.id === contact.userId) : -1;
+          if (idx === -1) {
+            // Filet de sécurité : un compte avec ce même identifiant existe peut-être déjà
+            // (créé avant que ce contact n'y soit officiellement lié) — on le retrouve
+            // avant d'en créer un second en double.
+            const fallbackUsername = (contact.username || `${normalizeUsernamePart(prenom)}.${normalizeUsernamePart(nom)}`).trim();
+            idx = users.findIndex((u) => u.username === fallbackUsername);
+          }
 
           if (idx === -1) {
             const username = (contact.username || `${normalizeUsernamePart(prenom)}.${normalizeUsernamePart(nom)}`).trim();
@@ -2092,6 +2119,7 @@ function attachHandlers() {
             usersChanged = true;
           } else {
             const u = users[idx];
+            contact.userId = u.id; // lie enfin le contact à son compte existant, pour la prochaine fois
             const username = (contact.username || u.username || "").trim() || u.username;
             u.username = username;
             u.displayName = `${prenom} ${nom}`;
