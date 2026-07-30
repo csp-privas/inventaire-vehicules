@@ -1511,34 +1511,39 @@ function renderConfig() {
       const isFirst = index === 0;
       const isLast = index === configDraft.vehicles.length - 1;
       const collapsed = configCollapsed.has(v.id);
-      const groupOptions = (g) =>
-        `<option value="">Aucun lieu</option>` +
-        v.groups
-          .map((grp) => `<option value="${grp.id}" ${g === grp.id ? "selected" : ""}>${escapeHtml(grp.name)}</option>`)
-          .join("");
 
-      const groupsList = v.groups
-        .map(
-          (g, gi) => `<div class="config-item-row">
+      let groupsList = "";
+      let items = "";
+      if (!collapsed) {
+        const groupOptions = (g) =>
+          `<option value="">Aucun lieu</option>` +
+          v.groups
+            .map((grp) => `<option value="${grp.id}" ${g === grp.id ? "selected" : ""}>${escapeHtml(grp.name)}</option>`)
+            .join("");
+
+        groupsList = v.groups
+          .map(
+            (g, gi) => `<div class="config-item-row">
             <button class="btn-ghost" data-action="moveGroupUp" data-vehicle="${v.id}" data-group="${g.id}" ${gi === 0 ? "disabled" : ""} title="Monter">↑</button>
             <button class="btn-ghost" data-action="moveGroupDown" data-vehicle="${v.id}" data-group="${g.id}" ${gi === v.groups.length - 1 ? "disabled" : ""} title="Descendre">↓</button>
             <input class="input-inline-small" data-role="groupName" data-vehicle="${v.id}" data-group="${g.id}" value="${escapeHtml(g.name)}" placeholder="Nom du lieu" />
             <button class="danger-btn" data-action="removeGroup" data-vehicle="${v.id}" data-group="${g.id}">✕</button>
           </div>`
-        )
-        .join("");
+          )
+          .join("");
 
-      const items = v.items
-        .map(
-          (it) => `<div class="config-item-row">
+        items = v.items
+          .map(
+            (it) => `<div class="config-item-row">
             <input class="input-inline-small" data-role="itemName" data-vehicle="${v.id}" data-item="${it.id}" value="${escapeHtml(it.name)}" placeholder="Nom de l'équipement" />
             <select class="input-inline-small" data-role="itemGroupSelect" data-vehicle="${v.id}" data-item="${it.id}" style="max-width:170px; color:#5B6770;">
               ${groupOptions(it.groupId)}
             </select>
             <button class="danger-btn" data-action="removeItem" data-vehicle="${v.id}" data-item="${it.id}">✕</button>
           </div>`
-        )
-        .join("");
+          )
+          .join("");
+      }
       return `<div class="config-card" style="${v.hidden ? "opacity:0.55;" : ""}">
         <div class="config-card-head">
           <button class="btn-ghost" data-action="toggleCollapse" data-vehicle="${v.id}" title="${collapsed ? "Déplier" : "Replier"}">${collapsed ? "▸" : "▾"}</button>
@@ -1992,6 +1997,8 @@ function attachHandlers() {
         const c = personnelDraft.find((c) => c.id === el.dataset.contact);
         if (c) c[field] = e.target.value;
         personnelDirty = true;
+        const btn = document.getElementById("savePersonnelBtn");
+        if (btn) btn.disabled = false;
       })
     );
   });
@@ -2000,6 +2007,8 @@ function attachHandlers() {
       const c = personnelDraft.find((c) => c.id === el.dataset.contact);
       if (c) c.isAdmin = e.target.checked;
       personnelDirty = true;
+      const btn = document.getElementById("savePersonnelBtn");
+      if (btn) btn.disabled = false;
     })
   );
   app.querySelectorAll('[data-role="contactCanViewDirectory"]').forEach((el) =>
@@ -2007,6 +2016,8 @@ function attachHandlers() {
       const c = personnelDraft.find((c) => c.id === el.dataset.contact);
       if (c) c.canViewDirectory = e.target.checked;
       personnelDirty = true;
+      const btn = document.getElementById("savePersonnelBtn");
+      if (btn) btn.disabled = false;
     })
   );
 
